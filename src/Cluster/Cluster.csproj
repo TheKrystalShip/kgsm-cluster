@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TheKrystalShip.KGSM.Cluster</RootNamespace>
+    <AssemblyName>TheKrystalShip.KGSM.Cluster</AssemblyName>
+
+    <!--
+      Native-AOT-safe. Every member other than kgsm-api is an AOT service, so nothing here may
+      reflect: storage is Microsoft.Data.Sqlite rather than an ORM, and every wire shape is
+      serialized through a source-generated JsonSerializerContext.
+    -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+
+    <PackageId>TheKrystalShip.KGSM.Cluster</PackageId>
+    <Authors>Heisenberg</Authors>
+    <Version>1.0.0-dev.1</Version>
+    <Description>
+      Cluster membership and durable member-to-member messaging for KGSM. A member joins a cluster
+      directly and is either a node (runs the engine and game servers) or an anchor (provides one
+      capability to the whole cluster), so joining costs nothing but this package: the roster and the
+      join handshake, a transactional outbox/inbox over plain HTTP, member service tokens, and one
+      SQLite store behind both halves. AOT-safe.
+    </Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The wire is part of the package. A member serves POST /api/v1/members/inbox and the join
+      exchange itself, so the endpoints ship here rather than being reimplemented by every member
+      that joins. Minimal APIs, not MVC: the request-delegate generator keeps them AOT-safe.
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Hosting, HTTP-factory and logging abstractions all arrive with the framework reference above. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The advisory is against the native SQLite library Microsoft.Data.Sqlite pulls in
+         transitively; no patched version is published. Suppressed so the build stays at zero
+         warnings, the same posture kgsm-api takes on the same package. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>
