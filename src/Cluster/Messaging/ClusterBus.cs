@@ -78,7 +78,11 @@ public sealed class ClusterBus(ClusterStore store, ILogger<ClusterBus> logger) :
         command.Parameters.AddWithValue("$pending", OutboxStatus.Pending);
         command.Parameters.AddWithValue("$now", SqliteValues.Stamp(now));
         command.Parameters.AddWithValue("$max", max);
+        return await ReadRowsAsync(command, ct).ConfigureAwait(false);
+    }
 
+    private static async Task<IReadOnlyList<OutboxRow>> ReadRowsAsync(SqliteCommand command, CancellationToken ct)
+    {
         var rows = new List<OutboxRow>();
         await using SqliteDataReader reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -90,6 +94,27 @@ public sealed class ClusterBus(ClusterStore store, ILogger<ClusterBus> logger) :
                 SqliteValues.ReadStampOrNull(reader, 10), SqliteValues.ReadStringOrNull(reader, 11)));
         }
         return rows;
+    }
+
+    /// <summary>
+    /// Every row addressed to one target, whatever its status, newest first. This is the diagnostic
+    /// read: outbox depth toward a member, and whether what is sitting there is still owed, settled or
+    /// dead. A growing pending count toward one target is the signal that that member is genuinely
+    /// unreachable beyond its backoff.
+    /// </summary>
+    public async Task<IReadOnlyList<OutboxRow>> ListForTargetAsync(string targetId, CancellationToken ct)
+    {
+        await using SqliteConnection connection = await store.OpenAsync(ct).ConfigureAwait(false);
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, message_id, target_id, target_url, type, payload, status, attempts,
+                   next_attempt_at, created_at, delivered_at, last_error
+            FROM outbox
+            WHERE target_id = $targetId
+            ORDER BY created_at DESC;
+            """;
+        command.Parameters.AddWithValue("$targetId", targetId);
+        return await ReadRowsAsync(command, ct).ConfigureAwait(false);
     }
 
     /// <summary>Mark a row delivered. A no-op if the row is gone — the drainer never throws over a row

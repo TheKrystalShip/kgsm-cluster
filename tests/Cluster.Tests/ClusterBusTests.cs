@@ -131,4 +131,30 @@ public class ClusterBusTests
 
         Assert.Equal(0, await cluster.Bus.PruneAsync(DateTimeOffset.UtcNow.AddDays(-30), default));
     }
+
+    [Fact]
+    public async Task TheDiagnosticReadReportsEveryRowForATargetWhateverItsStatus()
+    {
+        using var cluster = new TestCluster();
+        await cluster.Bus.EnqueueJsonAsync("t", "{}", TwoTargets, default);
+        OutboxRow pending = (await cluster.Bus.ListDueAsync(DateTimeOffset.UtcNow, 100, default))
+            .First(r => r.TargetId == "member-b");
+        await cluster.Bus.MarkDeadAsync(pending.Id, "member rejected: 403", default);
+
+        // A settled row is invisible to the due-scan and must still be visible to the operator asking
+        // what happened to it.
+        IReadOnlyList<OutboxRow> rows = await cluster.Bus.ListForTargetAsync("member-b", default);
+        Assert.Single(rows);
+        Assert.Equal(OutboxStatus.Dead, rows[0].Status);
+        Assert.Equal("member rejected: 403", rows[0].LastError);
+    }
+
+    [Fact]
+    public async Task TheDiagnosticReadIsScopedToOneTarget()
+    {
+        using var cluster = new TestCluster();
+        await cluster.Bus.EnqueueJsonAsync("t", "{}", TwoTargets, default);
+        Assert.Single(await cluster.Bus.ListForTargetAsync("member-c", default));
+        Assert.Empty(await cluster.Bus.ListForTargetAsync("member-nobody", default));
+    }
 }
