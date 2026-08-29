@@ -56,6 +56,43 @@ public sealed record ClusterOptions
     public int GcMs { get; init; } = 600000;
 
     /// <summary>
+    /// What this member is: a node that runs the engine and game servers, or an anchor that provides one
+    /// capability to the whole cluster. A deployment choice, so it is configuration rather than something
+    /// the code decides about itself.
+    /// </summary>
+    public string Kind { get; init; } = Membership.MemberKind.Node;
+
+    /// <summary>
+    /// This member's public address, when it has one an operator can state — behind a reverse proxy, the
+    /// address it is reached at leaves no local trace, so a configured value is the only way to be certain.
+    /// Merged ahead of everything reflected, which is what lets an operator correct a topology where
+    /// reflection reports the wrong thing. Blank means "whatever is learned".
+    /// </summary>
+    public string PublicBaseUrl { get; init; } = "";
+
+    /// <summary>An address only other members use, never a browser. Blank means none.</summary>
+    public string GossipUrl { get; init; } = "";
+
+    /// <summary>How often (ms) the gossip loop runs one push-pull round. Floor 250.</summary>
+    public int GossipMs { get; init; } = 5000;
+
+    /// <summary>
+    /// How often (ms) this member probes every other's identity endpoint. Keep it comfortably below
+    /// <see cref="SuspectMs"/> so several probes fall inside one suspect window; a single missed tick should
+    /// never be enough to suspect anybody. Floor 250.
+    /// </summary>
+    public int PollMs { get; init; } = 10000;
+
+    /// <summary>
+    /// How long (ms) a member may go without liveness evidence before it is suspected, and then again
+    /// before a suspect is declared dead. Floor 1000.
+    /// </summary>
+    public int SuspectMs { get; init; } = 30000;
+
+    /// <summary>How long (ms) a dead or departed member's row survives before it is removed. Floor 1000.</summary>
+    public int ReapMs { get; init; } = 300000;
+
+    /// <summary>
     /// Whether this member is part of a cluster — a non-blank <see cref="Secret"/>. Everything the
     /// package runs is inert when this is false.
     /// </summary>
@@ -75,6 +112,11 @@ public sealed record ClusterOptions
             RetryTtlDays = retryTtlDays,
             RetentionDays = Math.Max(retryTtlDays + 1, RetentionDays),
             GcMs = Math.Max(1000, GcMs),
+            Kind = Membership.MemberKind.IsKnown(Kind) ? Kind : Membership.MemberKind.Node,
+            GossipMs = Math.Max(250, GossipMs),
+            PollMs = Math.Max(250, PollMs),
+            SuspectMs = Math.Max(1000, SuspectMs),
+            ReapMs = Math.Max(1000, ReapMs),
         };
     }
 }

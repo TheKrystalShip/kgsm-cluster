@@ -144,5 +144,40 @@ public sealed class ClusterStore : IHostedService
         );
 
         CREATE INDEX IF NOT EXISTS ix_inbox_received ON inbox (received_at);
+
+        CREATE TABLE IF NOT EXISTS members (
+            id               TEXT PRIMARY KEY,
+            member_id        TEXT NOT NULL,
+            kind             TEXT NOT NULL,
+            url              TEXT NOT NULL,
+            candidates       TEXT NOT NULL,
+            address_verified INTEGER NOT NULL,
+            nickname         TEXT NULL,
+            incarnation      INTEGER NOT NULL,
+            status           TEXT NOT NULL,
+            membership_state TEXT NOT NULL,
+            state_changed_at TEXT NULL,
+            latency_ms       INTEGER NULL,
+            last_seen        TEXT NULL,
+            api_version      TEXT NOT NULL,
+            enabled          INTEGER NOT NULL
+        );
+
+        -- A member id identifies a member; two rows carrying one are the same member counted twice. The
+        -- unique index makes the duplicate impossible rather than merely unlikely, which is what lets a
+        -- simultaneous mutual introduction converge on one row.
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_members_member_id ON members (member_id);
+        CREATE INDEX IF NOT EXISTS ix_members_enabled ON members (enabled);
+
+        CREATE TABLE IF NOT EXISTS self_facts (
+            id         TEXT PRIMARY KEY,
+            kind       TEXT NOT NULL,
+            value      TEXT NOT NULL,
+            client     INTEGER NOT NULL,
+            provenance TEXT NOT NULL,
+            last_seen  TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_self_facts_kind ON self_facts (kind);
         """;
 }

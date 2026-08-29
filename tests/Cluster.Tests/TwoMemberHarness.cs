@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TheKrystalShip.KGSM.Cluster.Identity;
+using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.Cluster.Messaging;
 
 namespace TheKrystalShip.KGSM.Cluster.Tests;
@@ -33,7 +34,8 @@ internal sealed class MemberHost : IAsyncDisposable
 
     public static async Task<MemberHost> StartAsync(
         string memberId, string secret, string handledType = "test.message", bool handlerThrows = false,
-        IClusterMemberGate? gate = null, string? dbPath = null, string? url = null)
+        IClusterMemberGate? gate = null, string? dbPath = null, string? url = null,
+        string kind = MemberKind.Node, string apiVersion = "v1")
     {
         dbPath ??= Path.Combine(Path.GetTempPath(), $"kgsm-cluster-host-{Guid.NewGuid():N}.db");
         var handler = new RecordingHandler(handledType, handlerThrows);
@@ -49,9 +51,18 @@ internal sealed class MemberHost : IAsyncDisposable
             MemberId = memberId,
             Secret = secret,
             StorePath = dbPath,
+            Kind = kind,
             // Fast enough that a test never waits on a tick, slow enough not to spin.
             DrainMs = 100,
+            // Gossip and the poller are driven explicitly by the tests that care, so their loops stay out
+            // of the way of the ones that do not.
+            GossipMs = 3_600_000,
+            PollMs = 3_600_000,
         });
+        // A node states a route version; an anchor states nothing beyond what the package already holds,
+        // which is the whole point of an anchor being able to join.
+        if (kind == MemberKind.Node)
+            builder.Services.AddSingleton<IMemberCardSource>(sp => new TestNodeCardSource(sp, apiVersion));
         builder.Services.AddSingleton<IClusterMessageHandler>(handler);
         if (gate is not null) builder.Services.AddSingleton(gate);
 
@@ -81,4 +92,22 @@ internal sealed class DenyOneGate(string denied) : IClusterMemberGate
 {
     public Task<bool> IsEnabledAsync(string memberId)
         => Task.FromResult(!string.Equals(memberId, denied, StringComparison.Ordinal));
+}
+
+/// <summary>
+/// A node's card: the package's own self-card with the node block a node adds. This is exactly the shape a
+/// real node takes — wrap the default source, do not replace it, so the identity and addresses stay the
+/// package's answer.
+/// </summary>
+internal sealed class TestNodeCardSource(IServiceProvider services, string apiVersion) : IMemberCardSource
+{
+    public async Task<MemberCard> BuildAsync(CancellationToken ct)
+    {
+        var inner = new SelfMemberCardSource(
+            services.GetRequiredService<ClusterOptions>(),
+            services.GetRequiredService<SelfIdentityStore>(),
+            services.GetRequiredService<SelfIncarnation>());
+        MemberCard card = await inner.BuildAsync(ct);
+        return card with { Node = new NodeFacts(apiVersion, "test-build", ["monitor"]) };
+    }
 }

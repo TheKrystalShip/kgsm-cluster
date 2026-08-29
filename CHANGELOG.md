@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.4]
+
+### Added
+
+- Membership: the roster, the symmetric join handshake, anti-entropy gossip, per-member liveness polling
+  and the enabled-member gate. A member is a **node** or an **anchor**, and an anchor joins on the protocol
+  version alone — the route version is a statement about a surface it does not serve.
+- The member-to-member wire gains sync, introduce and identity, so joining a cluster needs no code beyond
+  this package.
+- `SelfMemberCardSource` states everything an anchor has to say about itself. A node registers its own
+  source over it to add the node block.
+- A refusal carries the values that disagreed, so a version mismatch names both versions rather than only
+  itself.
+
+### Fixed
+
+- A member that only ever initiated joins never learned any address for itself, so it gossiped itself with
+  none and every member that learned it that way held a row nothing could reach. It now adopts the address
+  the far side reflects back.
+- One addressless member in the roster cost every gossip round, failure timers included, because it was
+  picked as a sync partner and the round threw before reaching them.
+
 ## [1.0.0-dev.3]
 
 ### Changed

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.Cluster.Messaging;
 
 namespace TheKrystalShip.KGSM.Cluster;
@@ -47,6 +48,12 @@ public sealed class Iso8601UtcDateTimeOffsetConverter : JsonConverter<DateTimeOf
 /// </summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ClusterEnvelope))]
+[JsonSerializable(typeof(MemberCard))]
+[JsonSerializable(typeof(MemberCandidate))]
+[JsonSerializable(typeof(List<MemberCandidate>))]
+[JsonSerializable(typeof(IntroduceExchange))]
+[JsonSerializable(typeof(SyncRequest))]
+[JsonSerializable(typeof(SyncResponse))]
 [JsonSerializable(typeof(InboxAck))]
 [JsonSerializable(typeof(ClusterError))]
 [JsonSerializable(typeof(JsonElement))]
@@ -58,13 +65,28 @@ public sealed record InboxAck(string Status);
 
 /// <summary>
 /// The error body every cluster endpoint answers a non-2xx with, matching the frozen
-/// <c>{error:{code,message}}</c> envelope the rest of the ecosystem's HTTP surfaces use, so a member
-/// hosting these endpoints beside its own does not serve two error shapes.
+/// <c>{error:{code,message,details?}}</c> envelope the rest of the ecosystem's HTTP surfaces use, so a
+/// member hosting these endpoints beside its own does not serve two error shapes.
 /// </summary>
 public sealed record ClusterError(ClusterErrorBody Error)
 {
-    public static ClusterError Of(string code, string message) => new(new ClusterErrorBody(code, message));
+    public static ClusterError Of(string code, string message, ClusterErrorDetails? details = null)
+        => new(new ClusterErrorBody(code, message, details));
 }
 
 /// <inheritdoc cref="ClusterError"/>
-public sealed record ClusterErrorBody(string Code, string Message);
+public sealed record ClusterErrorBody(
+    string Code,
+    string Message,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ClusterErrorDetails? Details = null);
+
+/// <summary>
+/// What a refusal needs to say beyond naming itself. A member told only that its versions do not match
+/// knows something is wrong and nothing about what to change, so the two values that disagreed travel with
+/// the refusal.
+/// </summary>
+/// <param name="Remote">The refusing member's own value.</param>
+/// <param name="Local">The value it was given.</param>
+public sealed record ClusterErrorDetails(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Remote = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Local = null);

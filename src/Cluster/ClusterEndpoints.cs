@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TheKrystalShip.KGSM.Cluster.Identity;
+using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.Cluster.Messaging;
 
 namespace TheKrystalShip.KGSM.Cluster;
@@ -41,6 +42,9 @@ public static class ClusterEndpoints
     public static IEndpointRouteBuilder MapClusterEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost(ClusterRoutes.Inbox, InboxAsync).WithName("ClusterInbox").AllowAnonymous();
+        endpoints.MapPost(ClusterRoutes.Sync, SyncAsync).WithName("ClusterSync").AllowAnonymous();
+        endpoints.MapPost(ClusterRoutes.Introduce, IntroduceAsync).WithName("ClusterIntroduce").AllowAnonymous();
+        endpoints.MapGet(ClusterRoutes.Identity, IdentityAsync).WithName("ClusterIdentity").AllowAnonymous();
         return endpoints;
     }
 
@@ -55,8 +59,6 @@ public static class ClusterEndpoints
     {
         CancellationToken ct = context.RequestAborted;
         IServiceProvider services = context.RequestServices;
-        var tokens = services.GetRequiredService<IClusterTokenService>();
-        var gate = services.GetRequiredService<IClusterMemberGate>();
         var inbox = services.GetRequiredService<ClusterInbox>();
         ILogger logger = services.GetRequiredService<ILoggerFactory>()
             .CreateLogger("TheKrystalShip.KGSM.Cluster.Inbox");
@@ -68,28 +70,8 @@ public static class ClusterEndpoints
             return;
         }
 
-        string? token = ExtractBearerToken(context.Request);
-        if (token is null)
-        {
-            await ErrorAsync(context, StatusCodes.Status401Unauthorized, "invalid_cluster_token",
-                "missing bearer token", ct).ConfigureAwait(false);
-            return;
-        }
-
-        ClusterPrincipal? principal = await tokens.ValidateAsync(token).ConfigureAwait(false);
-        if (principal is null)
-        {
-            await ErrorAsync(context, StatusCodes.Status401Unauthorized, "invalid_cluster_token",
-                "invalid, expired, or unsigned cluster service token", ct).ConfigureAwait(false);
-            return;
-        }
-
-        if (!await gate.IsEnabledAsync(principal.MemberId).ConfigureAwait(false))
-        {
-            await ErrorAsync(context, StatusCodes.Status403Forbidden, "member_disabled",
-                $"member '{principal.MemberId}' is not an enabled member of this cluster", ct).ConfigureAwait(false);
-            return;
-        }
+        (ClusterPrincipal? principal, bool handled) = await AuthenticateAsync(context, ct).ConfigureAwait(false);
+        if (handled) return;
 
         // Read the body under a hard byte cap as well: a chunked request can omit or understate the
         // length the pre-check above read.
@@ -123,12 +105,12 @@ public static class ClusterEndpoints
             return;
         }
 
-        if (!string.Equals(envelope.From, principal.MemberId, StringComparison.Ordinal))
+        if (!string.Equals(envelope.From, principal!.MemberId, StringComparison.Ordinal))
         {
             logger.LogWarning(
                 "cluster inbox: envelope.from={From} does not match the authenticated token's member {MemberId} " +
                 "— rejected",
-                envelope.From, principal.MemberId);
+                envelope.From, principal!.MemberId);
             await ErrorAsync(context, StatusCodes.Status403Forbidden, "from_mismatch",
                 "envelope.from does not match the authenticated cluster service token", ct).ConfigureAwait(false);
             return;
@@ -148,12 +130,208 @@ public static class ClusterEndpoints
             ClusterJsonContext.Default.InboxAck, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The best-effort roster exchange. Token-authed and gated exactly as the inbox is, and deliberately
+    /// separate from the durable bus: a round is fire-and-forget anti-entropy with no outbox row and no
+    /// retry. The caller pushes its whole roster, this member merges it, and its own roster comes back for
+    /// the caller to merge in turn.
+    /// </summary>
+    private static async Task SyncAsync(HttpContext context)
+    {
+        CancellationToken ct = context.RequestAborted;
+        IServiceProvider services = context.RequestServices;
+        var gossip = services.GetRequiredService<GossipService>();
+        var options = services.GetRequiredService<ClusterOptions>();
+
+        (ClusterPrincipal? principal, bool handled) = await AuthenticateAsync(context, ct).ConfigureAwait(false);
+        if (handled) return;
+
+        (bool withinLimit, string body) =
+            await ReadBoundedBodyAsync(context.Request.Body, MaxEnvelopeBytes, ct).ConfigureAwait(false);
+        if (!withinLimit)
+        {
+            await TooLargeAsync(context, ct).ConfigureAwait(false);
+            return;
+        }
+
+        SyncRequest? request;
+        try
+        {
+            request = JsonSerializer.Deserialize(body, ClusterJsonContext.Default.SyncRequest);
+        }
+        catch (JsonException)
+        {
+            await ErrorAsync(context, StatusCodes.Status400BadRequest, "bad_request",
+                "the sync body is not valid JSON", ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (request?.Members is null)
+        {
+            await ErrorAsync(context, StatusCodes.Status400BadRequest, "bad_request",
+                "the sync body carries no members", ct).ConfigureAwait(false);
+            return;
+        }
+
+        // Reaching us with a valid token IS liveness evidence, from the one direction a probe cannot
+        // supply. It is recorded before the merge so an asymmetric partition resolves in favour of the
+        // member that is demonstrably talking.
+        await gossip.RecordInboundContactAsync(principal!.MemberId, ct).ConfigureAwait(false);
+        await gossip.MergeIncomingAsync(request.Members, ct).ConfigureAwait(false);
+
+        IReadOnlyList<SyncMember> roster = await gossip.BuildLocalRosterAsync(ct).ConfigureAwait(false);
+        await WriteJsonAsync(context, StatusCodes.Status200OK, new SyncResponse(options.MemberId, roster),
+            ClusterJsonContext.Default.SyncResponse, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The receiving half of the symmetric join. The same predicate the initiator ran is run here over the
+    /// caller's card, and this member records the mirror of what the caller recorded, so one round trip
+    /// leaves both sides equally informed and joining in either direction leaves the same cluster.
+    /// </summary>
+    private static async Task IntroduceAsync(HttpContext context)
+    {
+        CancellationToken ct = context.RequestAborted;
+        IServiceProvider services = context.RequestServices;
+        var handshake = services.GetRequiredService<MemberHandshakeService>();
+
+        (_, bool handled) = await AuthenticateAsync(context, ct).ConfigureAwait(false);
+        if (handled) return;
+
+        (bool withinLimit, string body) =
+            await ReadBoundedBodyAsync(context.Request.Body, MaxEnvelopeBytes, ct).ConfigureAwait(false);
+        if (!withinLimit)
+        {
+            await TooLargeAsync(context, ct).ConfigureAwait(false);
+            return;
+        }
+
+        IntroduceExchange? incoming;
+        try
+        {
+            incoming = JsonSerializer.Deserialize(body, ClusterJsonContext.Default.IntroduceExchange);
+        }
+        catch (JsonException)
+        {
+            await ErrorAsync(context, StatusCodes.Status400BadRequest, "bad_request",
+                "the introduce body is not valid JSON", ct).ConfigureAwait(false);
+            return;
+        }
+
+        // Where the request came from, as a hint the answer reports back honestly labelled. It is a socket
+        // address rather than a URL, so it seeds a candidate and nothing depends on it.
+        string? observed = context.Connection.RemoteIpAddress is { } ip
+            ? $"{context.Request.Scheme}://{FormatHost(ip)}"
+            : null;
+
+        (MemberAddOutcome outcome, IntroduceExchange? answer) =
+            await handshake.ReceiveAsync(incoming, observed, ct).ConfigureAwait(false);
+
+        if (outcome != MemberAddOutcome.Added || answer is null)
+        {
+            (int status, string code, string message) = RefusalFor(outcome);
+            // A refusal that only names itself leaves the far side knowing something is wrong and nothing
+            // about what to change, so the two values that disagreed travel back with it.
+            ClusterErrorDetails? details = outcome == MemberAddOutcome.VersionMismatch
+                ? new ClusterErrorDetails(
+                    Remote: (await handshake.BuildCardAsync(ct).ConfigureAwait(false)).Node?.ApiVersion,
+                    Local: incoming?.Self?.Node?.ApiVersion)
+                : null;
+            await ErrorAsync(context, status, code, message, ct, details).ConfigureAwait(false);
+            return;
+        }
+
+        await WriteJsonAsync(context, StatusCodes.Status200OK, answer,
+            ClusterJsonContext.Default.IntroduceExchange, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Who this member is. Token-authed like the rest: a member states itself to the cluster, not to
+    /// anybody who asks.
+    /// </summary>
+    private static async Task IdentityAsync(HttpContext context)
+    {
+        CancellationToken ct = context.RequestAborted;
+        var cards = context.RequestServices.GetRequiredService<IMemberCardSource>();
+
+        (_, bool handled) = await AuthenticateAsync(context, ct).ConfigureAwait(false);
+        if (handled) return;
+
+        MemberCard card = await cards.BuildAsync(ct).ConfigureAwait(false);
+        await WriteJsonAsync(context, StatusCodes.Status200OK, card, ClusterJsonContext.Default.MemberCard, ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Validate the caller's service token and the member gate. Returns the caller when it passes; when it
+    /// does not, the response has already been written and the caller must return immediately.
+    /// </summary>
+    private static async Task<(ClusterPrincipal? Principal, bool Handled)> AuthenticateAsync(
+        HttpContext context, CancellationToken ct)
+    {
+        IServiceProvider services = context.RequestServices;
+        var tokens = services.GetRequiredService<IClusterTokenService>();
+        var gate = services.GetRequiredService<IClusterMemberGate>();
+
+        string? token = ExtractBearerToken(context.Request);
+        if (token is null)
+        {
+            await ErrorAsync(context, StatusCodes.Status401Unauthorized, "invalid_cluster_token",
+                "missing bearer token", ct).ConfigureAwait(false);
+            return (null, true);
+        }
+
+        ClusterPrincipal? principal = await tokens.ValidateAsync(token).ConfigureAwait(false);
+        if (principal is null)
+        {
+            await ErrorAsync(context, StatusCodes.Status401Unauthorized, "invalid_cluster_token",
+                "invalid, expired, or unsigned cluster service token", ct).ConfigureAwait(false);
+            return (null, true);
+        }
+
+        if (!await gate.IsEnabledAsync(principal.MemberId).ConfigureAwait(false))
+        {
+            await ErrorAsync(context, StatusCodes.Status403Forbidden, "member_disabled",
+                $"member '{principal.MemberId}' is not an enabled member of this cluster", ct).ConfigureAwait(false);
+            return (null, true);
+        }
+
+        return (principal, false);
+    }
+
+    /// <summary>The status and code each refusal answers with, so both sides of the handshake name the same
+    /// reason and an operator sees the far side's verdict rather than a generic failure.</summary>
+    private static (int Status, string Code, string Message) RefusalFor(MemberAddOutcome outcome) => outcome switch
+    {
+        MemberAddOutcome.IsSelf => (StatusCodes.Status409Conflict, "member_is_self",
+            "that member is this one"),
+        MemberAddOutcome.VersionMismatch => (StatusCodes.Status409Conflict, "version_mismatch",
+            "the two nodes serve different route versions"),
+        MemberAddOutcome.ProtocolMismatch => (StatusCodes.Status409Conflict, "protocol_mismatch",
+            "the two members speak different cluster protocol versions"),
+        MemberAddOutcome.NotCluster => (StatusCodes.Status422UnprocessableEntity, "member_not_cluster",
+            "that member takes no part in a cluster"),
+        MemberAddOutcome.InsecureTransport => (StatusCodes.Status422UnprocessableEntity, "insecure_transport",
+            "a public address was offered over plaintext"),
+        MemberAddOutcome.InvalidUrl => (StatusCodes.Status400BadRequest, "invalid_url",
+            "that is not an absolute http(s) URL"),
+        _ => (StatusCodes.Status502BadGateway, "member_unreachable",
+            "that member did not answer"),
+    };
+
+    // An IPv6 literal has to be bracketed to be a valid authority.
+    private static string FormatHost(System.Net.IPAddress ip)
+        => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? $"[{ip}]" : ip.ToString();
+
     private static Task TooLargeAsync(HttpContext context, CancellationToken ct)
         => ErrorAsync(context, StatusCodes.Status413PayloadTooLarge, "payload_too_large",
             $"the envelope exceeds the {MaxEnvelopeBytes}-byte limit", ct);
 
-    private static Task ErrorAsync(HttpContext context, int status, string code, string message, CancellationToken ct)
-        => WriteJsonAsync(context, status, ClusterError.Of(code, message), ClusterJsonContext.Default.ClusterError, ct);
+    private static Task ErrorAsync(
+        HttpContext context, int status, string code, string message, CancellationToken ct,
+        ClusterErrorDetails? details = null)
+        => WriteJsonAsync(
+            context, status, ClusterError.Of(code, message, details), ClusterJsonContext.Default.ClusterError, ct);
 
     private static async Task WriteJsonAsync<T>(
         HttpContext context, int status, T value, JsonTypeInfo<T> typeInfo, CancellationToken ct)
