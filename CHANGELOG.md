@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.5]
+
+### Added
+
+- The gossip worker and the liveness poller are resolvable as themselves, so a member that has just joined
+  can drive a round rather than waiting out an interval.
+
 ## [1.0.0-dev.4]
 
 ### Added

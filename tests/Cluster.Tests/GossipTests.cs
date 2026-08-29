@@ -1,4 +1,5 @@
 using TheKrystalShip.KGSM.Cluster;
+using Microsoft.Extensions.Logging.Abstractions;
 using TheKrystalShip.KGSM.Cluster.Membership;
 
 namespace TheKrystalShip.KGSM.Cluster.Tests;
@@ -167,5 +168,122 @@ public class GossipTests
         await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
 
         Assert.Contains("https://panel.example.com", await b.Resolve<SelfIdentityStore>().PanelOriginsAsync(default));
+    }
+
+    [Fact]
+    public async Task AMemberThatGoesSilentIsSuspectedThenDeclaredDeadThenReaped()
+    {
+        // Failure detection end to end, driven off the clock rather than waited on. A member is suspected
+        // only once there has been no evidence for a whole window, dead only after a second, and removed
+        // only after the reap window — three steps, so a single missed tick never buries anybody.
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var gossip = new GossipService(
+            members, new SelfIncarnation(), new SelfIdentityStore(cluster.Store, cluster.Options),
+            new SelfMemberCardSource(cluster.Options, new SelfIdentityStore(cluster.Store, cluster.Options), new SelfIncarnation()),
+            cluster.Options with { SuspectMs = 1, ReapMs = 1 },
+            NullLogger<GossipService>.Instance);
+
+        MemberRow row = MemberRow.New("member-b", MemberKind.Node) with
+        {
+            Url = "http://member-b:8080",
+            LastSeen = DateTimeOffset.UtcNow.AddHours(-1),
+            StateChangedAt = DateTimeOffset.UtcNow.AddHours(-1),
+        };
+        await members.UpsertAsync(row, default);
+
+        await gossip.AdvanceFailureTimersAsync(default);
+        Assert.Equal(GossipState.Suspect, (await members.GetAsync(row.Id, default))!.MembershipState);
+
+        // Each step is measured from the previous transition, so the clock has to actually move between
+        // them. A pass that ran twice in the same instant would escalate twice off one silence.
+        await Task.Delay(5);
+        await gossip.AdvanceFailureTimersAsync(default);
+        Assert.Equal(GossipState.Dead, (await members.GetAsync(row.Id, default))!.MembershipState);
+
+        await Task.Delay(5);
+        await gossip.AdvanceFailureTimersAsync(default);
+        Assert.Null(await members.GetAsync(row.Id, default));
+    }
+
+    [Fact]
+    public async Task AMemberStillTalkingToUsIsNeverSuspected()
+    {
+        // Evidence arrives from either direction. A member we cannot probe but that still calls us is
+        // demonstrably alive, which is what stops an asymmetric partition from burying the live side.
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
+        var gossip = new GossipService(
+            members, new SelfIncarnation(), identity,
+            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation()),
+            cluster.Options with { SuspectMs = 60_000 },
+            NullLogger<GossipService>.Instance);
+
+        MemberRow row = MemberRow.New("member-b", MemberKind.Node) with
+        {
+            Url = "http://member-b:8080",
+            LastSeen = DateTimeOffset.UtcNow.AddHours(-1),
+            StateChangedAt = DateTimeOffset.UtcNow.AddHours(-1),
+        };
+        await members.UpsertAsync(row, default);
+
+        await gossip.RecordInboundContactAsync("member-b", default);
+        await gossip.AdvanceFailureTimersAsync(default);
+
+        Assert.Equal(GossipState.Alive, (await members.GetAsync(row.Id, default))!.MembershipState);
+    }
+
+    [Fact]
+    public void AFalseReportAboutOurselvesIsRefutedRatherThanBelieved()
+    {
+        // A member cannot be told it is dead. It answers with a higher incarnation, and a strictly higher
+        // incarnation always wins the merge, so the correction supersedes the report everywhere it spread.
+        var incoming = new SyncMember(
+            "member-a", MemberKind.Node, [], Incarnation: 5, GossipState.Dead, "v1");
+
+        MergeOutcome outcome = RosterMerger.Decide(
+            incoming, existing: null, myMemberId: "member-a", selfIncarnation: 3, existingFirstHandFresh: false);
+
+        Assert.Equal(MergeAction.RefuteSelf, outcome.Action);
+        Assert.Equal(6, outcome.RaiseSelfTo);
+    }
+
+    [Fact]
+    public void AnAliveReportAboutOurselvesNeedsNoRefutation()
+    {
+        MergeOutcome outcome = RosterMerger.Decide(
+            new SyncMember("member-a", MemberKind.Node, [], 9, GossipState.Alive, "v1"),
+            existing: null, myMemberId: "member-a", selfIncarnation: 3, existingFirstHandFresh: false);
+
+        Assert.Equal(MergeAction.Ignore, outcome.Action);
+    }
+
+    [Fact]
+    public void OurOwnFreshProbeOutranksAnEqualIncarnationRumour()
+    {
+        // Somebody else's suspicion does not override what this member just confirmed with its own eyes.
+        // Only a strictly higher incarnation — the member itself moving on — does.
+        MemberRow existing = MemberRow.New("member-b", MemberKind.Node) with { Incarnation = 4 };
+
+        Assert.Equal(MergeAction.Ignore, RosterMerger.Decide(
+            new SyncMember("member-b", MemberKind.Node, [], 4, GossipState.Suspect, "v1"),
+            existing, "member-a", 0, existingFirstHandFresh: true).Action);
+
+        Assert.Equal(MergeAction.Update, RosterMerger.Decide(
+            new SyncMember("member-b", MemberKind.Node, [], 5, GossipState.Suspect, "v1"),
+            existing, "member-a", 0, existingFirstHandFresh: true).Action);
+    }
+
+    [Fact]
+    public void ALocalDisableIsNeverUndoneByGossip()
+    {
+        // Disabling is this member's own override of the shared-secret trust, so nothing the mesh says
+        // resurrects it.
+        MemberRow disabled = MemberRow.New("member-b", MemberKind.Node) with { Enabled = false, Incarnation = 1 };
+
+        Assert.Equal(MergeAction.Ignore, RosterMerger.Decide(
+            new SyncMember("member-b", MemberKind.Node, [], 99, GossipState.Alive, "v1"),
+            disabled, "member-a", 0, existingFirstHandFresh: false).Action);
     }
 }
