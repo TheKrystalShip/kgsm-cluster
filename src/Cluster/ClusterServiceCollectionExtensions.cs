@@ -33,9 +33,10 @@ public static class ClusterServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<ClusterStore>());
 
         services.AddSingleton<IClusterTokenService, ClusterTokenService>();
-        // A member without a roster accepts anything holding the secret. One that has a roster
-        // registers its own gate over this, keyed by member id.
-        services.TryAddSingleton<IClusterMemberGate, AllowAllClusterMemberGate>();
+        // Every member has a roster, so every member gets the roster-backed gate: a disable-list keyed on
+        // member id, which is what lets a machine's node be disabled while the anchor beside it keeps
+        // running. AllowAllClusterMemberGate stands behind it for a member that deliberately keeps none.
+        services.TryAddSingleton<IClusterMemberGate, RosterMemberGate>();
 
         services.AddSingleton<ClusterInbox>();
 
