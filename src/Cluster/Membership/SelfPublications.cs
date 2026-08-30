@@ -15,6 +15,13 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// resolve and no new merge rule.
 /// </para>
 /// <para>
+/// <b>Changing the set raises this member's incarnation, and that is what delivers it.</b> A fact is
+/// carried by the self-entry, and an entry at an incarnation another member already holds supersedes
+/// nothing — so without the raise a healthy member's first published values are the only ones it can ever
+/// have. Rotating a key, correcting an address and withdrawing a fact all depend on it. Republishing an
+/// identical value raises nothing, so a caller re-stating its facts on a timer costs no rounds.
+/// </para>
+/// <para>
 /// <b>Trusted because the publisher holds the cluster secret, not because of who they claim to be.</b>
 /// The secret buys attribution, not isolation — any member holding it can present itself as another — so a
 /// published fact is exactly as trustworthy as anything else a member says. That is the accepted boundary
@@ -28,7 +35,7 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// point of publishing rather than silently truncated on the wire.
 /// </para>
 /// </remarks>
-public sealed class SelfPublications
+public sealed class SelfPublications(SelfIncarnation incarnation)
 {
     /// <summary>The largest a single published value may be. Comfortably above any public key encoding and
     /// far below anything that would make a gossip round expensive.</summary>
@@ -40,9 +47,9 @@ public sealed class SelfPublications
     private readonly ConcurrentDictionary<string, string> _facts = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// State a fact about this member, replacing any previous value for the same key. Raise the member's
-    /// incarnation afterwards if other members are already holding an older value and need to take the new
-    /// one before their next natural refresh.
+    /// State a fact about this member, replacing any previous value for the same key. A value that differs
+    /// from the one already published raises this member's incarnation, so the next gossip round carries it
+    /// to members already holding the old one instead of tying with them and being dropped.
     /// </summary>
     /// <exception cref="ArgumentException">The key is blank, the value exceeds
     /// <see cref="MaxValueBytes"/>, or this member already publishes <see cref="MaxFacts"/> other keys.</exception>
@@ -67,11 +74,20 @@ public sealed class SelfPublications
                 $"This member already publishes {MaxFacts} facts, which is the cap.", nameof(key));
         }
 
+        bool changed = !_facts.TryGetValue(key, out string? previous)
+            || !string.Equals(previous, value, StringComparison.Ordinal);
         _facts[key] = value;
+        if (changed)
+            incarnation.Advance();
     }
 
-    /// <summary>Stop stating a fact. Other members drop it when they next take this member's entry.</summary>
-    public void Withdraw(string key) => _facts.TryRemove(key, out _);
+    /// <summary>Stop stating a fact. Other members drop it when they next take this member's entry, which
+    /// the raised incarnation is what makes them do.</summary>
+    public void Withdraw(string key)
+    {
+        if (_facts.TryRemove(key, out _))
+            incarnation.Advance();
+    }
 
     /// <summary>Everything this member currently states about itself, as the wire carries it.</summary>
     public IReadOnlyDictionary<string, string> Current => new Dictionary<string, string>(_facts, StringComparer.Ordinal);

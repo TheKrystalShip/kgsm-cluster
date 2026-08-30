@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.15]
+
+### Fixed
+
+- **A member could never change what it published.** Facts ride the self-entry and a receiver takes that
+  entry only when it supersedes the one already held; at equal incarnation nothing supersedes. Nothing
+  raised a member's own incarnation when it published, so the first values a member published on a given
+  run were the only ones it could ever deliver, for as long as it stayed healthy. The inversion is the
+  tell: the facts moved only if the publisher first went unreachable long enough to be suspected, because
+  refutation was the one path that raised the counter.
+
+  Changing the fact set now raises the incarnation carrying it, and republishing an identical value does
+  not — so a caller re-stating its facts on a timer costs no rounds. This is what key rotation depends on:
+  the anchor publishes the incoming key beside the outgoing one, every verifier takes both, and only then
+  does the signer move. `Withdraw` takes effect for the same reason.
+
+- **A restarted member could not be heard about itself again.** The incarnation counter is a process
+  lifetime value that resets to zero, and it climbed back only by refuting a non-alive report. A member
+  that restarted without ever being suspected — a clean restart of a healthy member, which is the ordinary
+  case — sat below what the mesh held about it and had no path back, so nothing it said about itself was
+  ever taken again. It now climbs past an incarnation the mesh holds that is strictly ahead of its own.
+
+  Strictly ahead, never level: at rest every member reports our own value back to us, and treating that as
+  a reason to climb raises the incarnation once per gossip round for as long as the cluster is healthy.
+
 ## [1.0.0-dev.14]
 
 ### Fixed

@@ -62,6 +62,14 @@ The failure this replaces is the one worth remembering: a member starts, serves,
 its gossip and liveness die once per tick in a log nobody reads — joined, reachable, and not in the
 mesh at all.
 
+**What a member says about itself is only heard when its incarnation moves.** Published facts, addressing
+and kind all ride the self-entry, and an entry at an incarnation the receiver already holds supersedes
+nothing. So changing the fact set raises this member's counter, and a member that finds the mesh ahead of it
+climbs past — a restart resets the counter to zero while everybody else still holds where the last process
+reached. Without both, a member that stays healthy can never change one word of its own entry, and the
+symptom is nothing at all: no error, no log line, the old value simply staying put. Both raises are strictly
+ahead of what was observed, never level, or a healthy cluster raises its incarnations once per round forever.
+
 **The retention window must exceed the retry TTL.** `ClusterOptions.Validate()` enforces it. A shorter
 window lets the ledger forget a message the outbox is still retrying, and the redelivery applies twice.
 

@@ -84,6 +84,14 @@ public sealed class GossipService(
                             member.State, member.Incarnation, raised);
                         break;
 
+                    case MergeAction.CatchUpSelf:
+                        long caught = selfIncarnation.AdoptAheadOf(member.Incarnation);
+                        logger.LogInformation(
+                            "the mesh holds incarnation {Observed} for us and we were at less — caught up to " +
+                            "{New} so this member's own entry is heard again",
+                            member.Incarnation, caught);
+                        break;
+
                     case MergeAction.Insert:
                         await members.UpsertAsync(
                             MemberRow.New(member.MemberId, KindOrNode(member.Kind)) with

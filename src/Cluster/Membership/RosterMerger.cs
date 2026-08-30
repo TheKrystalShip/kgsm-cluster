@@ -17,6 +17,10 @@ public enum MergeAction
     /// <summary>The report is about us and is non-alive at or above our incarnation — refute it by raising
     /// our own and re-asserting alive. No row is written.</summary>
     RefuteSelf,
+
+    /// <summary>The report is about us, agrees we are alive, and carries an incarnation ahead of our own —
+    /// what a restart leaves behind. Climb past it so this member can be heard again. No row is written.</summary>
+    CatchUpSelf,
 }
 
 /// <summary>The decision, plus the incarnation to jump to when refuting.</summary>
@@ -35,6 +39,11 @@ public readonly record struct MergeOutcome(MergeAction Action, long RaiseSelfTo 
 /// another with its own probe, an equal-incarnation gossiped suspect or dead does not override that: its
 /// own eyes outrank somebody else's report. Only a strictly higher incarnation — the member itself, or its
 /// operator, moving on — overrides first-hand liveness.</para>
+/// <para><b>A member's own entry has to be able to move.</b> Everything self-asserted — published facts,
+/// addressing, kind — rides the self-entry and is taken only when that entry supersedes. So a member raises
+/// its own incarnation when it changes what it says, and climbs past the mesh when the mesh is ahead of it.
+/// Neither is refutation; both are the same requirement, that what a member says about itself can be heard
+/// more than once.</para>
 /// <para><b>A departure is a correction, never a lesson.</b> Terminal states travel so a member still
 /// holding an alive row is put right; they are not learned by a member holding no row at all. Reaping is a
 /// deletion, and anti-entropy repairs deletions — so a tombstone that inserts is one every member teaches
@@ -56,6 +65,12 @@ public static class RosterMerger
         {
             if (incoming.State != GossipState.Alive && incoming.Incarnation >= selfIncarnation)
                 return new MergeOutcome(MergeAction.RefuteSelf, incoming.Incarnation + 1);
+            // The mesh is ahead of us about ourselves, which a restart causes: the counter is not persisted,
+            // so it resets to zero while every other member still holds where the previous process reached.
+            // Until this member climbs back past that, nothing it says about itself supersedes anything —
+            // it is alive, agreed to be alive, and unable to change one word of its own entry.
+            if (incoming.Incarnation > selfIncarnation)
+                return new MergeOutcome(MergeAction.CatchUpSelf, incoming.Incarnation + 1);
             return new MergeOutcome(MergeAction.Ignore);
         }
 

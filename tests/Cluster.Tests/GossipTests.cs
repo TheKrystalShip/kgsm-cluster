@@ -179,7 +179,7 @@ public class GossipTests
         using var cluster = new TestCluster();
         var members = new MembersStore(cluster.Store);
         var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         var gossip = new GossipService(
             members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
             new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
@@ -217,7 +217,7 @@ public class GossipTests
         using var cluster = new TestCluster();
         var members = new MembersStore(cluster.Store);
         var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         var gossip = new GossipService(
             members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
             new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
@@ -257,8 +257,10 @@ public class GossipTests
     [Fact]
     public void AnAliveReportAboutOurselvesNeedsNoRefutation()
     {
+        // Nothing to refute — the mesh agrees we are alive, and at our own incarnation there is nothing to
+        // correct in either direction.
         MergeOutcome outcome = RosterMerger.Decide(
-            new SyncMember("member-a", MemberKind.Node, [], 9, GossipState.Alive, "v1"),
+            new SyncMember("member-a", MemberKind.Node, [], 3, GossipState.Alive, "v1"),
             existing: null, myMemberId: "member-a", selfIncarnation: 3, existingFirstHandFresh: false);
 
         Assert.Equal(MergeAction.Ignore, outcome.Action);
@@ -355,6 +357,104 @@ public class GossipTests
 
         Assert.Null(await aMembers.GetByMemberIdAsync("member-gone", default));
         Assert.NotNull(await bMembers.GetByMemberIdAsync("member-gone", default));
+    }
+
+    [Fact]
+    public async Task AChangedFactReachesMembersThatAlreadyHoldTheOldOne()
+    {
+        // The case a key rotation is: an anchor publishes, the cluster converges, and then the anchor
+        // publishes something different. Its entry has to supersede the one everybody is already holding,
+        // and at equal incarnation nothing supersedes — so a member that never raises its own counter is
+        // frozen on whatever it happened to publish first, for as long as it stays healthy.
+        await using MemberHost anchor = await MemberHost.StartAsync("auth-anchor", Secret, kind: MemberKind.Anchor);
+        await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret);
+
+        SelfPublications facts = anchor.Resolve<SelfPublications>();
+        facts.Publish("auth.publickey", "first-key");
+
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(anchor.Url, null, default);
+        await GossipRoundsAsync(4, anchor, node);
+
+        MembersStore held = node.Resolve<MembersStore>();
+        Assert.Equal(
+            "first-key",
+            PublishedFacts.Decode((await held.GetByMemberIdAsync("auth-anchor", default))!.Published)["auth.publickey"]);
+
+        // Rotation: the incoming key is published beside the outgoing one, then the old one withdrawn.
+        facts.Publish("auth.publickey.next", "second-key");
+        await GossipRoundsAsync(4, anchor, node);
+
+        IReadOnlyDictionary<string, string> during =
+            PublishedFacts.Decode((await held.GetByMemberIdAsync("auth-anchor", default))!.Published);
+        Assert.Equal("first-key", during["auth.publickey"]);
+        Assert.Equal("second-key", during["auth.publickey.next"]);
+
+        facts.Withdraw("auth.publickey");
+        await GossipRoundsAsync(4, anchor, node);
+
+        IReadOnlyDictionary<string, string> after =
+            PublishedFacts.Decode((await held.GetByMemberIdAsync("auth-anchor", default))!.Published);
+        Assert.False(after.ContainsKey("auth.publickey"));
+        Assert.Equal("second-key", after["auth.publickey.next"]);
+    }
+
+    [Fact]
+    public async Task AHealthyClusterDoesNotInflateIncarnations()
+    {
+        // Climbing has to key on the mesh being strictly ahead. At rest every member reports our own value
+        // back to us, and treating that as a reason to climb would raise the counter once per round for as
+        // long as nothing at all was wrong.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await GossipRoundsAsync(20, a, b);
+
+        Assert.Equal(0, a.Resolve<SelfIncarnation>().Current);
+        Assert.Equal(0, b.Resolve<SelfIncarnation>().Current);
+    }
+
+    [Fact]
+    public void AMemberBehindTheMeshAboutItselfClimbsPastIt()
+    {
+        // What a restart leaves: the counter is not persisted, so it resets while every other member still
+        // holds where the previous process reached. Landing one past, not level, or the next self-entry ties
+        // and is dropped — and the member stays unable to change one word of its own entry.
+        MergeOutcome outcome = RosterMerger.Decide(
+            new SyncMember("member-a", MemberKind.Node, [], Incarnation: 9, GossipState.Alive, "v1"),
+            existing: null, myMemberId: "member-a", selfIncarnation: 0, existingFirstHandFresh: false);
+
+        Assert.Equal(MergeAction.CatchUpSelf, outcome.Action);
+        Assert.Equal(10, outcome.RaiseSelfTo);
+
+        var self = new SelfIncarnation();
+        Assert.Equal(10, self.AdoptAheadOf(9));
+        Assert.Equal(10, self.AdoptAheadOf(9));   // already past it
+        Assert.Equal(10, self.AdoptAheadOf(10));  // level is not ahead
+    }
+
+    [Fact]
+    public void OnlyARealChangeToTheFactSetRaisesTheIncarnation()
+    {
+        // A caller re-stating its facts on a timer must not cost a round, or a healthy cluster spends its
+        // incarnations on saying the same thing.
+        var self = new SelfIncarnation();
+        var facts = new SelfPublications(self);
+
+        facts.Publish("auth.publickey", "key");
+        Assert.Equal(1, self.Current);
+
+        facts.Publish("auth.publickey", "key");
+        Assert.Equal(1, self.Current);
+
+        facts.Publish("auth.publickey", "rotated");
+        Assert.Equal(2, self.Current);
+
+        facts.Withdraw("auth.publickey");
+        Assert.Equal(3, self.Current);
+
+        facts.Withdraw("auth.publickey");
+        Assert.Equal(3, self.Current);
     }
 
     [Fact]
@@ -557,7 +657,7 @@ public class GossipTests
         using var cluster = new TestCluster();
         var members = new MembersStore(cluster.Store);
         var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         var gossip = new GossipService(
             members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
             new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),

@@ -178,7 +178,7 @@ public class PublishedFactsTests
     [Fact]
     public void AMemberStatesFactsAboutItself()
     {
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         publications.Publish("auth.publickey", "-----BEGIN PUBLIC KEY-----");
         Assert.Equal("-----BEGIN PUBLIC KEY-----", publications.Current["auth.publickey"]);
     }
@@ -186,7 +186,7 @@ public class PublishedFactsTests
     [Fact]
     public void PublishingAgainReplacesRatherThanAccumulates()
     {
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         publications.Publish("k", "one");
         publications.Publish("k", "two");
         Assert.Equal("two", publications.Current["k"]);
@@ -196,7 +196,7 @@ public class PublishedFactsTests
     [Fact]
     public void WithdrawingRemovesIt()
     {
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         publications.Publish("k", "v");
         publications.Withdraw("k");
         Assert.Empty(publications.Current);
@@ -207,7 +207,7 @@ public class PublishedFactsTests
     {
         // Every fact rides every gossip round. Refusing here names the caller; truncating on the wire would
         // hand another member a key that is silently wrong.
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         Assert.Throws<ArgumentException>(
             () => publications.Publish("k", new string('x', SelfPublications.MaxValueBytes + 1)));
     }
@@ -215,7 +215,7 @@ public class PublishedFactsTests
     [Fact]
     public void ThereIsACapOnHowManyFactsAMemberStates()
     {
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         for (int i = 0; i < SelfPublications.MaxFacts; i++)
             publications.Publish($"k{i}", "v");
         Assert.Throws<ArgumentException>(() => publications.Publish("one-too-many", "v"));
@@ -252,7 +252,7 @@ public class PublishedFactsTests
         var members = new MembersStore(cluster.Store);
         var state = new ClusterStateStore(cluster.Store, cluster.Options);
         var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
-        var publications = new SelfPublications();
+        var publications = new SelfPublications(new SelfIncarnation());
         var gossip = new GossipService(
             members, state, new SelfIncarnation(), identity,
             new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
