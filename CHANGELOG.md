@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.13]
+
+### Fixed
+
+- **A roster row that learned no address could never gain one.** Addressing was adopted only when a
+  report superseded on membership state, and two members holding the same state at the same incarnation
+  neither supersedes the other — so the whole report was ignored, and every address in it with it, for
+  as long as both stayed alive. A member that joined over loopback therefore reached every other member
+  as a row with no address, and stayed unreachable to them after it moved somewhere routable, with
+  nothing in any log.
+
+  Addressing is now taken from any report about a member the roster holds, whatever that report is worth
+  as a claim about state. Where a member answers is an additive fact and the poller settles it;
+  membership state is a claim and still has to win its ordering. A proven address is not unpinned by
+  hearsay, and a disabled member's row is still untouched by gossip.
+
 ## [1.0.0-dev.12]
 
 ### Fixed

@@ -63,6 +63,18 @@ public sealed class GossipService(
                 MergeOutcome outcome =
                     RosterMerger.Decide(member, existing, myMemberId, selfIncarnation.Current, fresh);
 
+                // Addressing is taken from any report about a member we hold, whatever that report is
+                // worth as a claim about its state. Where a member answers is an additive fact and the
+                // poller settles it; gating it behind the state ordering is what leaves a row that
+                // learned no address unable to ever gain one.
+                if (existing is { Enabled: true }
+                    && !string.Equals(member.MemberId, myMemberId, StringComparison.Ordinal)
+                    && await members.LearnAddressingAsync(
+                        existing.Id, member.Candidates, member.ApiVersion, ct).ConfigureAwait(false))
+                {
+                    logger.LogDebug("learned addressing for {MemberId} via gossip", member.MemberId);
+                }
+
                 switch (outcome.Action)
                 {
                     case MergeAction.RefuteSelf:

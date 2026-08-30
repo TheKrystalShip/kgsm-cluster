@@ -632,4 +632,90 @@ public class GossipTests
         // Still known locally: it is a true fact about where this member answers.
         Assert.Contains(await identity.CandidatesAsync(default), c => c.Url == "http://127.0.0.1:8098");
     }
+
+    [Fact]
+    public async Task ARowThatLearnedNoAddressGainsOneWhenTheMeshHasIt()
+    {
+        // The live sequence this comes from: a member joins over loopback, so the member that joined it
+        // pins a real address for that pair but filters it when gossiping onward — and everybody else
+        // creates a row with no address. When the member later answers somewhere routable, that row has
+        // to be able to learn it. Before, it could not: two members holding the same state at the same
+        // incarnation neither supersedes the other, so the whole report was ignored and the address with
+        // it, for as long as both stayed alive.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost c = await MemberHost.StartAsync("member-c", Secret);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(c.Url, null, default);
+
+        MembersStore rosterC = c.Resolve<MembersStore>();
+        // C holds a member it has heard of and has no address for, exactly as a filtered loopback leaves it.
+        await rosterC.UpsertAsync(
+            MemberRow.New("replica-probe", MemberKind.Node) with { MembershipState = GossipState.Alive },
+            default);
+        MemberRow before = (await rosterC.GetByMemberIdAsync("replica-probe", default))!;
+        Assert.Equal("", before.Url);
+
+        // The mesh now carries a routable address for it, at the same state and the same incarnation.
+        await c.Resolve<GossipService>().MergeIncomingAsync(
+        [
+            new SyncMember("replica-probe", MemberKind.Node,
+                [new MemberCandidate("http://192.168.1.128:8096", true)],
+                before.Incarnation, GossipState.Alive, "v1"),
+        ], default);
+
+        MemberRow after = (await rosterC.GetByMemberIdAsync("replica-probe", default))!;
+        Assert.Equal("http://192.168.1.128:8096", after.Url);
+    }
+
+    [Fact]
+    public async Task AProvenAddressIsNotUnpinnedByWhatGossipReports()
+    {
+        // Learning addressing must not undo a probe. The candidate is taken; the pinned address is not
+        // moved by hearsay, because this member has evidence and the report has none.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await a.Resolve<MemberLatencyPoller>().RunTickAsync(default);
+
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow proven = (await rosterA.GetByMemberIdAsync("member-b", default))!;
+        Assert.True(proven.AddressVerified);
+
+        await a.Resolve<GossipService>().MergeIncomingAsync(
+        [
+            new SyncMember("member-b", MemberKind.Node,
+                [new MemberCandidate("http://10.9.9.9:8080", true)],
+                proven.Incarnation, GossipState.Alive, "v1"),
+        ], default);
+
+        MemberRow after = (await rosterA.GetByMemberIdAsync("member-b", default))!;
+        Assert.Equal(proven.Url, after.Url);
+        // The offered address is still kept as something to try if the pinned one stops answering.
+        Assert.Contains(
+            MemberCandidates.Decode(after.Candidates), candidate => candidate.Url == "http://10.9.9.9:8080");
+    }
+
+    [Fact]
+    public async Task ADisabledMembersRowIsNotAlteredByGossipAtAll()
+    {
+        // Disable is this member's own override of the shared-secret trust, and addressing is no
+        // exception to it.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow row = (await rosterA.GetByMemberIdAsync("member-b", default))!;
+        await rosterA.SetEnabledAsync(row.Id, false, default);
+
+        await a.Resolve<GossipService>().MergeIncomingAsync(
+        [
+            new SyncMember("member-b", MemberKind.Node,
+                [new MemberCandidate("http://10.9.9.9:8080", true)],
+                row.Incarnation, GossipState.Alive, "v1"),
+        ], default);
+
+        MemberRow after = (await rosterA.GetByMemberIdAsync("member-b", default))!;
+        Assert.DoesNotContain(
+            MemberCandidates.Decode(after.Candidates), candidate => candidate.Url == "http://10.9.9.9:8080");
+    }
 }

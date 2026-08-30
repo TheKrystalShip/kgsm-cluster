@@ -263,3 +263,7 @@ to fix rather than something that will resolve itself.
    observed.
 3. **Rate-limit thresholds** for the inbox, once real message volumes exist.
 4. **A transactional enqueue overload**, when a caller needs the guarantee §6 describes.
+5. **Candidate lists only grow.** Every address a member has ever been reported at is kept and the
+   poller walks them in order until one answers, so a member that changes address often accumulates
+   attempts it will never need again. Bounded in practice by how many addresses a member has actually
+   advertised, and worth a cap or an expiry if that stops being small.

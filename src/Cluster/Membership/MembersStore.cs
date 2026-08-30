@@ -105,6 +105,46 @@ public sealed class MembersStore(ClusterStore store)
     }
 
     /// <summary>
+    /// Take addressing a member is reported at, whatever else that report is worth.
+    /// </summary>
+    /// <remarks>
+    /// <b>Addressing is not a claim that has to win an ordering.</b> Where a member answers is an additive
+    /// fact: two members reporting different addresses for a third are usually both right, and the poller
+    /// settles which one this member can actually use. Membership state is the opposite — it is a claim,
+    /// and one report of it has to beat another.
+    /// <para>
+    /// Conflating them means a row that learned no address never gains one. Two members holding the same
+    /// state at the same incarnation neither supersedes the other, so the whole report is ignored — and
+    /// with it every address in it, even when the row has none at all and the report has a routable one.
+    /// For every other field an incumbent is a real statement; for a missing address it is an absence, and
+    /// an absence should lose to anything.
+    /// </para>
+    /// <para>Writes only when something changed, so an unchanged report each round costs a read.</para>
+    /// </remarks>
+    /// <returns>Whether anything was learned.</returns>
+    public async Task<bool> LearnAddressingAsync(
+        string id, IReadOnlyList<MemberCandidate>? candidates, string? apiVersion, CancellationToken ct)
+    {
+        MemberRow? row = await GetAsync(id, ct).ConfigureAwait(false);
+        if (row is null) return false;
+
+        string merged = candidates is { Count: > 0 }
+            ? MemberCandidates.Merge(row.Candidates, candidates)
+            : row.Candidates;
+        string version = string.IsNullOrWhiteSpace(apiVersion) ? row.ApiVersion : apiVersion;
+        // A proven address is left alone; an unproven one follows whatever is on offer, and the poller
+        // settles it either way.
+        string url = row.AddressVerified ? row.Url : MemberCandidates.Best(MemberCandidates.Decode(merged));
+
+        if (merged == row.Candidates && version == row.ApiVersion && url == row.Url)
+            return false;
+
+        await UpsertAsync(row with { Candidates = merged, ApiVersion = version, Url = url }, ct)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
     /// Pin the address a member has just answered on, and fold the candidates it offered into what is
     /// already held. This is the only thing that marks an address verified: until a probe has come back as
     /// the right member, the row carries a claim. A silent no-op if the row is gone.
