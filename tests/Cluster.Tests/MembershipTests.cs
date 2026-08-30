@@ -219,4 +219,51 @@ public class SelfIncarnationTests
         await Task.WhenAll(Enumerable.Range(0, 64).Select(i => Task.Run(() => incarnation.RaiseToRefute(i))));
         Assert.True(incarnation.Current >= 64);
     }
+
+}
+
+public class AdvertisableCandidateTests
+{
+    [Theory]
+    [InlineData("http://127.0.0.1:8098")]
+    [InlineData("http://localhost:8098")]
+    [InlineData("https://127.0.0.1")]
+    [InlineData("http://[::1]:8098")]
+    public void ALoopbackAddressIsNeverAdvertised(string url)
+    {
+        // It means "me" to whoever reads it, so on another machine it connects to that machine — which
+        // in a cluster running the same components is plausibly another member of the same kind.
+        Assert.Empty(MemberCandidates.Advertisable([new MemberCandidate(url, Client: true)]));
+    }
+
+    [Theory]
+    [InlineData("http://10.0.0.5:8080")]
+    [InlineData("https://auth.thekrystalship.com")]
+    [InlineData("http://hotbox.lan:8080")]
+    public void AnAddressAnotherMachineCanUseIsAdvertised(string url)
+    {
+        Assert.Single(MemberCandidates.Advertisable([new MemberCandidate(url, Client: true)]));
+    }
+
+    [Fact]
+    public void TheRestOfTheListSurvivesTheFilter()
+    {
+        IReadOnlyList<MemberCandidate> advertisable = MemberCandidates.Advertisable(
+        [
+            new MemberCandidate("http://127.0.0.1:8098", true),
+            new MemberCandidate("https://auth.thekrystalship.com", true),
+        ]);
+        Assert.Single(advertisable);
+        Assert.Equal("https://auth.thekrystalship.com", advertisable[0].Url);
+    }
+
+    [Fact]
+    public void ALoopbackAddressIsStillStoredAndStillUsable()
+    {
+        // Two members on one machine reach each other this way, and that is a real topology. The address
+        // is kept and the local poller walks it; what it is not is something to tell anybody else.
+        string stored = MemberCandidates.Encode([new MemberCandidate("http://127.0.0.1:8098", true)]);
+        Assert.Single(MemberCandidates.Decode(stored));
+        Assert.Equal("http://127.0.0.1:8098", MemberCandidates.Best(MemberCandidates.Decode(stored)));
+    }
 }

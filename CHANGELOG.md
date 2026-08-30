@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.11]
+
+### Fixed
+
+- **A loopback address is never advertised to another member.** It means "me" to whoever reads it, so
+  told to a member on another machine it does not fail to connect — it reaches whatever is on that
+  machine's own port, which in a cluster running the same components is plausibly another member of the
+  same kind. A member talking to itself while believing it reached somebody else is worse than an
+  address that does not answer, because nothing errors.
+
+  Filtered at every point candidates cross the wire, which is two paths and not one: a member's own
+  card and gossip self-entry, **and the candidates it holds for its neighbours** — gossip carries a
+  member's whole roster, so a loopback pinned for a neighbour reaches every member in the cluster
+  regardless of what that neighbour advertises about itself.
+
+  The address is still stored and still used. Two members on one machine reach each other over loopback
+  and that is a real topology; what changes is that it is never told to anybody. The limit that follows
+  is real and stated: a member reachable *only* over loopback cannot be learned from the mesh, because
+  nothing on the wire can express "the loopback of the machine we share".
+
 ## [1.0.0-dev.10]
 
 ### Added

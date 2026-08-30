@@ -579,4 +579,57 @@ public class GossipTests
         Assert.False((await rosterA.GetByMemberIdAsync("still-running", default))!.Enabled);
         Assert.Empty(await rosterA.ListEnabledAsync(default));
     }
+
+    [Fact]
+    public async Task ALoopbackAddressPinnedForANeighbourIsNotGossipedOnward()
+    {
+        // The path a member cannot fix by tidying its own facts: A holds a loopback address for B because
+        // an operator pasted one, and gossip carries A's whole roster — so without filtering at the wire
+        // that address reaches C, where it means C's own machine.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        await using MemberHost c = await MemberHost.StartAsync("member-c", Secret);
+
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(c.Url, null, default);
+
+        // An operator's loopback pin for B, exactly as a same-machine join leaves it.
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow rowB = (await rosterA.GetByMemberIdAsync("member-b", default))!;
+        await rosterA.PinAddressAsync(
+            rowB.Id, "http://127.0.0.1:8098", [new MemberCandidate("http://127.0.0.1:8098", true)], default);
+
+        await GossipRoundsAsync(8, a);
+
+        MemberRow asCSeesIt = (await c.Resolve<MembersStore>().GetByMemberIdAsync("member-b", default))!;
+        Assert.DoesNotContain(
+            MemberCandidates.Decode(asCSeesIt.Candidates),
+            candidate => candidate.Url.Contains("127.0.0.1", StringComparison.Ordinal));
+
+        // And A keeps it, because on A's machine it is the address that works.
+        Assert.Contains(
+            MemberCandidates.Decode((await rosterA.GetByMemberIdAsync("member-b", default))!.Candidates),
+            candidate => candidate.Url == "http://127.0.0.1:8098");
+    }
+
+    [Fact]
+    public async Task AMembersOwnLoopbackAddressIsNotOfferedOnItsCard()
+    {
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "auth-anchor", Secret, kind: MemberKind.Anchor, seedOwnAddress: false);
+        SelfIdentityStore identity = anchor.Resolve<SelfIdentityStore>();
+
+        // What a same-machine join reflects back, and what a public name adds later.
+        await identity.RecordCandidateAsync(
+            "http://127.0.0.1:8098", client: true, SelfIdentityStore.OperatorProvenance, default);
+        await identity.RecordCandidateAsync(
+            "https://auth.thekrystalship.com", client: true, SelfIdentityStore.OperatorProvenance, default);
+
+        MemberCard card = await anchor.Resolve<IMemberCardSource>().BuildAsync(default);
+
+        Assert.Single(card.Candidates);
+        Assert.Equal("https://auth.thekrystalship.com", card.Candidates[0].Url);
+        // Still known locally: it is a true fact about where this member answers.
+        Assert.Contains(await identity.CandidatesAsync(default), c => c.Url == "http://127.0.0.1:8098");
+    }
 }

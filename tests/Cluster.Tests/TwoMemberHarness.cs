@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using TheKrystalShip.KGSM.Cluster.Identity;
 using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.Cluster.Messaging;
+using TheKrystalShip.KGSM.Cluster.Messaging;
 
 namespace TheKrystalShip.KGSM.Cluster.Tests;
 
@@ -46,6 +47,17 @@ internal sealed class MemberHost : IAsyncDisposable
         // up: a returning member has to answer where it did before, or the sender's queued row is
         // addressed at nobody and the down-then-up case proves nothing.
         builder.WebHost.UseUrls(url ?? "http://127.0.0.1:0");
+        // Every member-to-member client resolves the harness's advertised names back to loopback.
+        foreach (string client in new[]
+                 {
+                     GossipWorker.HttpClientName, MemberHandshakeService.HttpClientName,
+                     MemberLatencyPoller.HttpClientName, OutboxDrainer.HttpClientName,
+                 })
+        {
+            builder.Services.AddHttpClient(client)
+                .ConfigurePrimaryHttpMessageHandler(() => new LoopbackResolvingHandler());
+        }
+
         builder.Services.AddKgsmCluster(new ClusterOptions
         {
             MemberId = memberId,
@@ -76,12 +88,20 @@ internal sealed class MemberHost : IAsyncDisposable
         // that a member is reachable by nobody it did not itself introduce, which is a property of the
         // harness rather than of the package, and it hides real behaviour: a member nobody can reach also
         // cannot refute anything said about it.
+        // Members advertise a name rather than the loopback address they are bound to, because loopback
+        // is never advertised — it means "me" to whoever reads it. LoopbackResolvingHandler sends the
+        // connection back to where the member actually listens, which is what a resolver does for a real
+        // deployment and what this harness has to do for itself.
+        var uri = new Uri(bound);
+        string advertised = $"http://{memberId}.lan:{uri.Port}";
         if (seedOwnAddress)
         {
             await app.Services.GetRequiredService<SelfIdentityStore>()
-                .RecordCandidateAsync(bound, client: true, SelfIdentityStore.OperatorProvenance, default);
+                .RecordCandidateAsync(advertised, client: true, SelfIdentityStore.OperatorProvenance, default);
         }
 
+        // Url stays the address the member is really listening on, so a test can dial it directly.
+        // What it tells other members is the name.
         return new MemberHost(app, memberId, bound, dbPath, handler);
     }
 
@@ -122,5 +142,24 @@ internal sealed class TestNodeCardSource(IServiceProvider services, string apiVe
             services.GetRequiredService<SelfPublications>());
         MemberCard card = await inner.BuildAsync(ct);
         return card with { Node = new NodeFacts(apiVersion, "test-build", ["monitor"]) };
+    }
+}
+
+/// <summary>
+/// Sends a request for one of the harness's advertised names to the loopback port the member is really
+/// listening on. It stands in for a resolver: a member advertises a name another machine could use, and
+/// something turns that into a connection. Without it these tests would have to advertise loopback, which
+/// is the one thing a member never does.
+/// </summary>
+internal sealed class LoopbackResolvingHandler : DelegatingHandler
+{
+    public LoopbackResolvingHandler() : base(new HttpClientHandler()) { }
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri is { Host: var host } uri && host.EndsWith(".lan", StringComparison.Ordinal))
+            request.RequestUri = new UriBuilder(uri) { Host = "127.0.0.1" }.Uri;
+        return base.SendAsync(request, cancellationToken);
     }
 }

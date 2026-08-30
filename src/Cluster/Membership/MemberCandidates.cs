@@ -49,6 +49,42 @@ public static class MemberCandidates
     public static string Merge(string? stored, IEnumerable<MemberCandidate>? offered) =>
         Encode([.. offered ?? [], .. Decode(stored)]);
 
+    /// <summary>
+    /// The candidates fit to tell another member about — everything except a loopback address.
+    /// </summary>
+    /// <remarks>
+    /// <b>A loopback address means "me" to whoever reads it.</b> Told to a member on another machine it
+    /// does not fail: it connects to whatever is on that machine's own port, which in a cluster running
+    /// the same components is plausibly a different member of the same kind. The result is a member
+    /// talking to itself while believing it reached somebody else, and nothing errors — which is worse
+    /// than an address that simply does not answer.
+    /// <para>
+    /// It stays in the store and stays usable. Two members on one machine reach each other over loopback
+    /// and that is a real topology, so the address is kept and the local poller still walks it. What it
+    /// is not is something to advertise, because it is true only for whoever already holds it. That
+    /// applies equally to a member's own address and to a candidate it holds for somebody else: gossip
+    /// carries a member's whole roster, so an unfiltered loopback pinned for a neighbour reaches every
+    /// member in the cluster.
+    /// </para>
+    /// <para>
+    /// The consequence, stated because it is a real limit rather than an oversight: a member reachable
+    /// <em>only</em> over loopback cannot be learned from the mesh at all. It is reachable by whoever was
+    /// told directly, and if that row is ever reaped the address has to be given again. Nothing on the
+    /// wire can express "the loopback of the machine we happen to share".
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<MemberCandidate> Advertisable(IEnumerable<MemberCandidate>? candidates)
+        => [.. (candidates ?? []).Where(c => !IsLoopback(c.Url))];
+
+    /// <summary>Whether an address points back at whoever reads it.</summary>
+    private static bool IsLoopback(string? url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return false;
+        if (string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        return System.Net.IPAddress.TryParse(uri.Host, out System.Net.IPAddress? ip)
+               && System.Net.IPAddress.IsLoopback(ip);
+    }
+
     /// <summary>The address to call a member on: the first candidate a browser can also use, else the first
     /// of any kind, else empty. Member-to-member accepts either, since an address no browser can use is
     /// still an address.</summary>

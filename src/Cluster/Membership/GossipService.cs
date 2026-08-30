@@ -125,7 +125,7 @@ public sealed class GossipService(
         var self = new SyncMember(
             options.MemberId,
             options.Kind,
-            await selfIdentity.CandidatesAsync(ct).ConfigureAwait(false),
+            MemberCandidates.Advertisable(await selfIdentity.CandidatesAsync(ct).ConfigureAwait(false)),
             selfIncarnation.Current,
             GossipState.Alive,
             card.Node?.ApiVersion ?? "",
@@ -138,7 +138,8 @@ public sealed class GossipService(
             if (string.Equals(row.MemberId, options.MemberId, StringComparison.Ordinal))
                 continue;
             roster.Add(new SyncMember(
-                row.MemberId, row.Kind, MemberCandidates.Decode(row.Candidates), row.Incarnation,
+                row.MemberId, row.Kind, MemberCandidates.Advertisable(MemberCandidates.Decode(row.Candidates)),
+                row.Incarnation,
                 row.MembershipState, row.ApiVersion, PublishedFacts.Decode(row.Published)));
         }
         return roster;

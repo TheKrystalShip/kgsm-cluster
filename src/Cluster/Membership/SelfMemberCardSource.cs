@@ -21,7 +21,7 @@ public sealed class SelfMemberCardSource(
         options.MemberId,
         options.Kind,
         options.Enabled,
-        await selfIdentity.CandidatesAsync(ct).ConfigureAwait(false),
+        MemberCandidates.Advertisable(await selfIdentity.CandidatesAsync(ct).ConfigureAwait(false)),
         selfIncarnation.Current,
         ClusterProtocol.Current,
         Node: null,
