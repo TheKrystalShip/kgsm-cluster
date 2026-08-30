@@ -118,7 +118,7 @@ public sealed class GossipWorker(
                 .DeserializeAsync(body, ClusterJsonContext.Default.SyncResponse, ct)
                 .ConfigureAwait(false);
             if (sync?.Members is not null)
-                await gossip.MergeIncomingAsync(sync.Members, sync.State, ct).ConfigureAwait(false);
+                await gossip.MergeIncomingAsync(sync.Members, sync.State, sync.From, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

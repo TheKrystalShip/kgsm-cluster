@@ -50,6 +50,21 @@ public static class MemberCandidates
         Encode([.. offered ?? [], .. Decode(stored)]);
 
     /// <summary>
+    /// Take addresses from a report about somebody else: anything new is appended, and what is already
+    /// stored keeps its position. The set grows; the order does not move.
+    /// </summary>
+    /// <remarks>
+    /// <b>Order is the member's own statement and nobody else's.</b> A member lists its addresses
+    /// most-preferred first, and that ranking is the only thing carrying which address it wants to be
+    /// reached at — a relayed row carries the relayer's ranking, which is a different member's answer to a
+    /// question only the subject can answer. Letting hearsay lead makes the stored order a function of
+    /// which partner spoke last: two members holding the same addresses in different orders will each
+    /// overwrite the other every round, and whatever reads position zero gets a different answer each time.
+    /// </remarks>
+    public static string Absorb(string? stored, IEnumerable<MemberCandidate>? offered) =>
+        Encode([.. Decode(stored), .. offered ?? []]);
+
+    /// <summary>
     /// The candidates fit to tell another member about — everything except a loopback address.
     /// </summary>
     /// <remarks>

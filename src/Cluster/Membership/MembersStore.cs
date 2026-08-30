@@ -75,7 +75,7 @@ public sealed class MembersStore(ClusterStore store)
     public async Task UpdateMembershipAsync(
         string id, string membershipState, long incarnation, DateTimeOffset stateChangedAt,
         IReadOnlyList<MemberCandidate>? candidates, string? apiVersion,
-        IReadOnlyDictionary<string, string>? published, CancellationToken ct)
+        IReadOnlyDictionary<string, string>? published, bool authoritative, CancellationToken ct)
     {
         MemberRow? row = await GetAsync(id, ct).ConfigureAwait(false);
         if (row is null) return;
@@ -93,7 +93,9 @@ public sealed class MembersStore(ClusterStore store)
 
         if (candidates is { Count: > 0 })
         {
-            string merged = MemberCandidates.Merge(row.Candidates, candidates);
+            string merged = authoritative
+                ? MemberCandidates.Merge(row.Candidates, candidates)
+                : MemberCandidates.Absorb(row.Candidates, candidates);
             updated = updated with { Candidates = merged };
             // An unverified address follows the offer; a proven one is left alone until a probe says
             // otherwise, so one short gossip round cannot unpin an address this member knows works.
@@ -123,13 +125,18 @@ public sealed class MembersStore(ClusterStore store)
     /// </remarks>
     /// <returns>Whether anything was learned.</returns>
     public async Task<bool> LearnAddressingAsync(
-        string id, IReadOnlyList<MemberCandidate>? candidates, string? apiVersion, CancellationToken ct)
+        string id, IReadOnlyList<MemberCandidate>? candidates, string? apiVersion, bool authoritative,
+        CancellationToken ct)
     {
         MemberRow? row = await GetAsync(id, ct).ConfigureAwait(false);
         if (row is null) return false;
 
+        // Only the member itself may say which of its addresses comes first. A relayed row carries the
+        // relayer's order, so it contributes addresses and leaves the ranking alone.
         string merged = candidates is { Count: > 0 }
-            ? MemberCandidates.Merge(row.Candidates, candidates)
+            ? authoritative
+                ? MemberCandidates.Merge(row.Candidates, candidates)
+                : MemberCandidates.Absorb(row.Candidates, candidates)
             : row.Candidates;
         string version = string.IsNullOrWhiteSpace(apiVersion) ? row.ApiVersion : apiVersion;
         // A proven address is left alone; an unproven one follows whatever is on offer, and the poller
@@ -155,18 +162,22 @@ public sealed class MembersStore(ClusterStore store)
         MemberRow? row = await GetAsync(id, ct).ConfigureAwait(false);
         if (row is null) return;
 
-        // The address that answered leads the list: it is the one thing here that has been proven, so it is
-        // what a later cold start tries first. Whether a BROWSER can also use it is a separate claim this
-        // probe says nothing about, so the flag is carried over from whoever offered the address rather
-        // than assumed — an address of unknown kind stays member-only, and the roster reports no browser
-        // address rather than handing one out that cannot work.
+        // What answered is recorded in Url; the candidate ORDER is left as the member stated it. Two
+        // separate facts — which address this member proved works, and which address the member asks to be
+        // reached at — and hoisting the proven one conflates them, leaving the poller to fight the member's
+        // own advertisement for position zero, which is the slot a browser is handed. It buys nothing
+        // either: AddressesFor already tries Url ahead of every candidate.
+        // Whether a BROWSER can also use it is a separate claim this probe says nothing about, so the flag
+        // is carried over from whoever offered the address rather than assumed — an address of unknown kind
+        // stays member-only, and the roster reports no browser address rather than handing one out that
+        // cannot work.
         string merged = MemberCandidates.Merge(row.Candidates, offered);
         bool client = MemberCandidates.Decode(merged)
             .Any(c => c.Client && string.Equals(c.Url, address, StringComparison.OrdinalIgnoreCase));
 
         await UpsertAsync(row with
         {
-            Candidates = MemberCandidates.Merge(merged, [new MemberCandidate(address, client)]),
+            Candidates = MemberCandidates.Absorb(merged, [new MemberCandidate(address, client)]),
             Url = address,
             AddressVerified = true,
         }, ct).ConfigureAwait(false);

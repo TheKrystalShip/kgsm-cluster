@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.16]
+
+### Fixed
+
+- **The address a browser was handed for a member changed from one gossip round to the next.** Candidate
+  order is the member's own ranking of where it wants to be reached, and it is what the panel reads. Two
+  other writers were also setting it: a successful probe hoisted whichever address answered to the front,
+  and a relayed roster row led with the relayer's ranking rather than the subject's. On a member reached
+  at a LAN address while advertising a public name, the probe re-hoisted the LAN address on its own
+  cadence and the member's own entry restored the public one — so position zero alternated, and the panel
+  handed out whichever had been written most recently.
+
+  A probe now records what it proved in `Url`/`AddressVerified` and leaves the ranking alone; it already
+  tries `Url` ahead of every candidate, so hoisting bought nothing. A report about a third party
+  contributes addresses without reordering them, and only the member's own entry in a sync re-ranks —
+  which the merge can now tell apart, because a sync names its sender.
+
+  The visible consequence was a member reachable on a LAN handing its LAN address to a browser that had
+  no route to it, intermittently. `client` still cannot express reachable-from-here versus
+  reachable-from-anywhere; that is recorded as an open item, because fixing it changes the wire shape.
+
 ## [1.0.0-dev.15]
 
 ### Fixed

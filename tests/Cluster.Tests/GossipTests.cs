@@ -458,6 +458,81 @@ public class GossipTests
     }
 
     [Fact]
+    public void OnlyAMemberItselfRanksItsOwnAddresses()
+    {
+        // A member lists its addresses most-preferred first, and that ranking is the only signal carrying
+        // which one it wants to be reached at. A relayed row carries the RELAYER's ranking.
+        var stored = MemberCandidates.Encode(
+        [
+            new MemberCandidate("https://member-b.example", Client: true),
+            new MemberCandidate("http://10.0.0.9:8080", Client: true),
+        ]);
+        MemberCandidate[] reversed =
+        [
+            new MemberCandidate("http://10.0.0.9:8080", Client: true),
+            new MemberCandidate("https://member-b.example", Client: true),
+        ];
+
+        // Hearsay contributes addresses and leaves the ranking alone.
+        Assert.Equal(
+            "https://member-b.example",
+            MemberCandidates.ClientUrl(MemberCandidates.Decode(MemberCandidates.Absorb(stored, reversed))));
+
+        // A new address from hearsay still arrives — it is only the order that is not the relayer's to set.
+        IReadOnlyList<MemberCandidate> grown = MemberCandidates.Decode(MemberCandidates.Absorb(
+            stored, [new MemberCandidate("https://new.example", Client: true)]));
+        Assert.Equal(3, grown.Count);
+        Assert.Equal("https://new.example", grown[2].Url);
+
+        // The member's own word does re-rank.
+        Assert.Equal(
+            "http://10.0.0.9:8080",
+            MemberCandidates.ClientUrl(MemberCandidates.Decode(MemberCandidates.Merge(stored, reversed))));
+    }
+
+    [Fact]
+    public async Task ProvingAnAddressDoesNotRerankTheMembersPreference()
+    {
+        // The defect this closes: the probe hoisted whichever address answered to the front of the
+        // candidate list, while the member's own advertisement puts its preferred address there. Two
+        // writers, one slot — and that slot is what a browser is handed, so the panel showed whichever
+        // had written last. A LAN member reachable only at its LAN address would permanently hand a
+        // phone on mobile data an address it cannot use.
+        using var cluster = new TestCluster();
+        var store = new MembersStore(cluster.Store);
+
+        MemberRow row = MemberRow.New("member-b", MemberKind.Node) with
+        {
+            Candidates = MemberCandidates.Encode(
+            [
+                new MemberCandidate("https://member-b.example", Client: true),
+                new MemberCandidate("http://10.0.0.9:8080", Client: true),
+            ]),
+        };
+        await store.UpsertAsync(row, default);
+
+        // The probe reaches it at the LAN address — the only one that answers from here.
+        await store.PinAddressAsync(
+            row.Id, "http://10.0.0.9:8080",
+            [
+                new MemberCandidate("https://member-b.example", Client: true),
+                new MemberCandidate("http://10.0.0.9:8080", Client: true),
+            ],
+            default);
+
+        MemberRow after = (await store.GetAsync(row.Id, default))!;
+
+        // What was proven, recorded as what it is.
+        Assert.Equal("http://10.0.0.9:8080", after.Url);
+        Assert.True(after.AddressVerified);
+
+        // What the member asked for, left as it asked. Two facts, two fields.
+        Assert.Equal(
+            "https://member-b.example",
+            MemberCandidates.ClientUrl(MemberCandidates.Decode(after.Candidates)));
+    }
+
+    [Fact]
     public async Task AnAnchorsPublishedKeyReachesAJoiningMemberAtOnce()
     {
         // A key you verify sessions against is no use arriving a gossip round late: a member that joins
@@ -825,7 +900,7 @@ public class GossipTests
             new SyncMember("replica-probe", MemberKind.Node,
                 [new MemberCandidate("http://192.168.1.128:8096", true)],
                 before.Incarnation, GossipState.Alive, "v1"),
-        ], default);
+        ], "replica-probe", default);
 
         MemberRow after = (await rosterC.GetByMemberIdAsync("replica-probe", default))!;
         Assert.Equal("http://192.168.1.128:8096", after.Url);
@@ -850,7 +925,7 @@ public class GossipTests
             new SyncMember("member-b", MemberKind.Node,
                 [new MemberCandidate("http://10.9.9.9:8080", true)],
                 proven.Incarnation, GossipState.Alive, "v1"),
-        ], default);
+        ], "member-b", default);
 
         MemberRow after = (await rosterA.GetByMemberIdAsync("member-b", default))!;
         Assert.Equal(proven.Url, after.Url);
@@ -877,7 +952,7 @@ public class GossipTests
             new SyncMember("member-b", MemberKind.Node,
                 [new MemberCandidate("http://10.9.9.9:8080", true)],
                 row.Incarnation, GossipState.Alive, "v1"),
-        ], default);
+        ], "member-b", default);
 
         MemberRow after = (await rosterA.GetByMemberIdAsync("member-b", default))!;
         Assert.DoesNotContain(

@@ -267,3 +267,10 @@ to fix rather than something that will resolve itself.
    poller walks them in order until one answers, so a member that changes address often accumulates
    attempts it will never need again. Bounded in practice by how many addresses a member has actually
    advertised, and worth a cap or an expiry if that stops being small.
+6. **`client` cannot distinguish reachable-from-here from reachable-from-anywhere.** A LAN address a
+   human pasted is flagged browser-usable because it genuinely is, from inside that network — and it is
+   useless to a phone on mobile data. The roster carries one boolean where the honest answer is a scope,
+   so a member reachable only on a LAN and a member reachable from the internet are indistinguishable
+   once both are flagged. Candidate order is the member's own preference and stands in for the
+   distinction today, which works because a member advertising a public name puts it first. A real fix
+   is a scope on the candidate, which changes the wire shape and so costs a protocol bump.

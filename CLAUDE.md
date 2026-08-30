@@ -70,6 +70,14 @@ reached. Without both, a member that stays healthy can never change one word of 
 symptom is nothing at all: no error, no log line, the old value simply staying put. Both raises are strictly
 ahead of what was observed, never level, or a healthy cluster raises its incarnations once per round forever.
 
+**Candidate order is the member's own statement, and two writers must not fight over it.** A member lists
+its addresses most-preferred first, and that ranking is the only thing carrying which address it wants to be
+reached at — it is what a browser is handed. So a relayed row contributes addresses and never their order
+(`MemberCandidates.Absorb`), only the subject's own entry re-ranks (`Merge`), and a successful probe records
+what it proved in `Url`/`AddressVerified` rather than hoisting it to the front. Any writer that reorders on
+something other than the member's own word makes position zero a function of who wrote last, and the symptom
+is a panel handing out a different address depending on the round.
+
 **The retention window must exceed the retry TTL.** `ClusterOptions.Validate()` enforces it. A shorter
 window lets the ledger forget a message the outbox is still retrying, and the redelivery applies twice.
 

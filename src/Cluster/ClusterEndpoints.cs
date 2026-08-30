@@ -177,7 +177,7 @@ public static class ClusterEndpoints
         // supply. It is recorded before the merge so an asymmetric partition resolves in favour of the
         // member that is demonstrably talking.
         await gossip.RecordInboundContactAsync(principal!.MemberId, ct).ConfigureAwait(false);
-        await gossip.MergeIncomingAsync(request.Members, request.State, ct).ConfigureAwait(false);
+        await gossip.MergeIncomingAsync(request.Members, request.State, request.From, ct).ConfigureAwait(false);
 
         IReadOnlyList<SyncMember> roster = await gossip.BuildLocalRosterAsync(ct).ConfigureAwait(false);
         IReadOnlyList<ClusterAssignment> state = await gossip.BuildLocalStateAsync(ct).ConfigureAwait(false);

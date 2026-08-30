@@ -27,16 +27,21 @@ public sealed class GossipService(
     /// Merge an incoming roster into this member's own, one member at a time: insert new hearsay, adopt
     /// superseding state, refute reports about ourselves. Never writes the first-hand liveness triple.
     /// </summary>
-    public async Task MergeIncomingAsync(IReadOnlyList<SyncMember> incoming, CancellationToken ct)
-        => await MergeIncomingAsync(incoming, null, ct).ConfigureAwait(false);
+    public async Task MergeIncomingAsync(
+        IReadOnlyList<SyncMember> incoming, string? from, CancellationToken ct)
+        => await MergeIncomingAsync(incoming, null, from, ct).ConfigureAwait(false);
 
     /// <summary>
     /// Merge an incoming roster and the cluster state that came with it. The state is merged first: a
     /// member learning it has been demoted should know that before it acts on anything else in the round.
     /// Returns the capabilities whose holder changed.
     /// </summary>
+    /// <param name="from">The member that sent this roster. Its own entry is a first-hand statement about
+    /// itself; every other entry is that member relaying somebody else's, which contributes addresses but
+    /// never their ranking.</param>
     public async Task<IReadOnlyList<string>> MergeIncomingAsync(
-        IReadOnlyList<SyncMember> incoming, IReadOnlyList<ClusterAssignment>? state, CancellationToken ct)
+        IReadOnlyList<SyncMember> incoming, IReadOnlyList<ClusterAssignment>? state, string? from,
+        CancellationToken ct)
     {
         IReadOnlyList<string> reassigned = await clusterState.MergeAsync(state, ct).ConfigureAwait(false);
         foreach (string capability in reassigned)
@@ -45,11 +50,12 @@ public sealed class GossipService(
                 "cluster state: {Capability} is now held by {Holder}",
                 capability, await clusterState.HolderAsync(capability, ct).ConfigureAwait(false) ?? "nobody");
         }
-        await MergeMembersAsync(incoming, ct).ConfigureAwait(false);
+        await MergeMembersAsync(incoming, from, ct).ConfigureAwait(false);
         return reassigned;
     }
 
-    private async Task MergeMembersAsync(IReadOnlyList<SyncMember> incoming, CancellationToken ct)
+    private async Task MergeMembersAsync(
+        IReadOnlyList<SyncMember> incoming, string? from, CancellationToken ct)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         string myMemberId = options.MemberId;
@@ -67,10 +73,15 @@ public sealed class GossipService(
                 // worth as a claim about its state. Where a member answers is an additive fact and the
                 // poller settles it; gating it behind the state ordering is what leaves a row that
                 // learned no address unable to ever gain one.
+                // A member speaking about itself ranks its own addresses; anybody else is relaying.
+                bool authoritative = from is not null
+                    && string.Equals(member.MemberId, from, StringComparison.Ordinal);
+
                 if (existing is { Enabled: true }
                     && !string.Equals(member.MemberId, myMemberId, StringComparison.Ordinal)
                     && await members.LearnAddressingAsync(
-                        existing.Id, member.Candidates, member.ApiVersion, ct).ConfigureAwait(false))
+                        existing.Id, member.Candidates, member.ApiVersion, authoritative, ct)
+                        .ConfigureAwait(false))
                 {
                     logger.LogDebug("learned addressing for {MemberId} via gossip", member.MemberId);
                 }
@@ -112,7 +123,7 @@ public sealed class GossipService(
                     case MergeAction.Update:
                         await members.UpdateMembershipAsync(
                             existing!.Id, member.State, member.Incarnation, now, member.Candidates,
-                            member.ApiVersion, member.Published, ct).ConfigureAwait(false);
+                            member.ApiVersion, member.Published, authoritative, ct).ConfigureAwait(false);
                         logger.LogDebug(
                             "member {MemberId} → {State}@{Incarnation} via gossip",
                             member.MemberId, member.State, member.Incarnation);
@@ -200,7 +211,7 @@ public sealed class GossipService(
                     if (since is null || now - since.Value >= suspectWindow)
                     {
                         await members.UpdateMembershipAsync(
-                            row.Id, GossipState.Suspect, row.Incarnation, now, null, null, null, ct)
+                            row.Id, GossipState.Suspect, row.Incarnation, now, null, null, null, false, ct)
                             .ConfigureAwait(false);
                         logger.LogInformation("member {MemberId} → suspect (no liveness evidence)", row.MemberId);
                     }
@@ -210,7 +221,7 @@ public sealed class GossipService(
                     if (row.StateChangedAt is { } since && now - since >= suspectWindow)
                     {
                         await members.UpdateMembershipAsync(
-                            row.Id, GossipState.Dead, row.Incarnation, now, null, null, null, ct)
+                            row.Id, GossipState.Dead, row.Incarnation, now, null, null, null, false, ct)
                             .ConfigureAwait(false);
                         logger.LogInformation("member {MemberId} → dead (suspect timeout)", row.MemberId);
                     }
