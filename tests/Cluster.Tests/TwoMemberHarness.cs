@@ -35,7 +35,7 @@ internal sealed class MemberHost : IAsyncDisposable
     public static async Task<MemberHost> StartAsync(
         string memberId, string secret, string handledType = "test.message", bool handlerThrows = false,
         IClusterMemberGate? gate = null, string? dbPath = null, string? url = null,
-        string kind = MemberKind.Node, string apiVersion = "v1")
+        string kind = MemberKind.Node, string apiVersion = "v1", bool seedOwnAddress = true)
     {
         dbPath ??= Path.Combine(Path.GetTempPath(), $"kgsm-cluster-host-{Guid.NewGuid():N}.db");
         var handler = new RecordingHandler(handledType, handlerThrows);
@@ -70,7 +70,19 @@ internal sealed class MemberHost : IAsyncDisposable
         app.MapClusterEndpoints();
         await app.StartAsync();
 
-        return new MemberHost(app, memberId, app.Urls.First(), dbPath, handler);
+        string bound = app.Urls.First();
+        // A member cannot work out its own address, and in a real deployment it learns one the first time
+        // somebody reaches it — an operator pasting it into a panel, or an admin's browser arriving. Without
+        // that a member is reachable by nobody it did not itself introduce, which is a property of the
+        // harness rather than of the package, and it hides real behaviour: a member nobody can reach also
+        // cannot refute anything said about it.
+        if (seedOwnAddress)
+        {
+            await app.Services.GetRequiredService<SelfIdentityStore>()
+                .RecordCandidateAsync(bound, client: true, SelfIdentityStore.OperatorProvenance, default);
+        }
+
+        return new MemberHost(app, memberId, bound, dbPath, handler);
     }
 
     public T Resolve<T>() where T : notnull => _app.Services.GetRequiredService<T>();

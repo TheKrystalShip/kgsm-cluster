@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.9]
+
+### Fixed
+
+- **A member could not be removed from a running cluster.** Removal deleted the row, and anti-entropy
+  exists to repair a roster that is missing something — so the first member that still held it handed it
+  straight back, alive. `MembersStore.MarkLeftAsync` records a terminal state one incarnation above what
+  the member last claimed, so the departure supersedes rather than being an absence, and the failure
+  timers reap it everywhere once the reap window passes. `DeleteAsync` remains the reaper's primitive and
+  says so.
+
+  A member that is still running and still gossiping refutes its own removal and returns. That is the
+  refutation channel working — only a member may raise its own incarnation — so removing one that is
+  still participating is a request the cluster overturns. Stop it, or disable it.
+
 ## [1.0.0-dev.8]
 
 ### Added

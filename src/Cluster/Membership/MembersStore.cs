@@ -192,8 +192,42 @@ public sealed class MembersStore(ClusterStore store)
         return true;
     }
 
-    /// <summary>Remove a row entirely — an operator forgetting a member, which is a different act from
-    /// disabling it. False if the row does not exist.</summary>
+    /// <summary>
+    /// Record that a member has left the cluster, so the departure travels instead of the row simply
+    /// being absent. Sets the terminal <see cref="GossipState.Left"/> one incarnation above what the
+    /// member last claimed, so it supersedes the alive every other member is holding, and the failure
+    /// timers reap the row on each of them once the reap window passes.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deleting the row instead does not remove anybody.</b> Anti-entropy exists to repair a roster
+    /// that is missing something, so an absence is re-learned from the first member that still holds it.
+    /// A departure has to be a state that supersedes.
+    /// <para>
+    /// <b>A member that is still running will refute this and return.</b> That is the refutation channel
+    /// working as designed: only a member may raise its own incarnation, and it re-asserts alive above
+    /// whatever was said about it, which is what stops a live member being buried by a false report.
+    /// Removing a member that is still participating is therefore a request the mesh will overturn —
+    /// stop it first, or disable it, which is local and absolute and no gossip undoes.
+    /// </para>
+    /// </remarks>
+    public async Task<bool> MarkLeftAsync(string id, DateTimeOffset now, CancellationToken ct)
+    {
+        MemberRow? row = await GetAsync(id, ct).ConfigureAwait(false);
+        if (row is null) return false;
+        await UpsertAsync(row with
+        {
+            MembershipState = GossipState.Left,
+            Incarnation = row.Incarnation + 1,
+            StateChangedAt = now,
+        }, ct).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Drop a row outright. This is the reaper's primitive — a row already terminal for longer than the
+    /// reap window — and it is not how a member is removed: see <see cref="MarkLeftAsync"/> for why a
+    /// deletion alone is undone by the next gossip round. False if the row does not exist.
+    /// </summary>
     public async Task<bool> DeleteAsync(string id, CancellationToken ct)
     {
         int deleted = await store.WriteAsync(async (connection, token) =>

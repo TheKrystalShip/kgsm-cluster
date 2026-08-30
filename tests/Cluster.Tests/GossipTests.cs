@@ -429,4 +429,154 @@ public class GossipTests
         Assert.Null(await node.Resolve<ClusterFacts>()
             .FromHolderAsync(ClusterCapability.Auth, "auth.publickey", default));
     }
+
+    [Fact]
+    public async Task DeletingARowIsUndoneByTheNextRound()
+    {
+        // Why removal is a state and not a deletion: anti-entropy exists to repair a roster that is
+        // missing something, so deleting a row asks gossip to undo the removal, and it obliges.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        await using MemberHost gone = await MemberHost.StartAsync("removeme", Secret);
+
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(gone.Url, null, default);
+        await GossipRoundsAsync(8, a, b);
+
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow row = (await rosterA.GetByMemberIdAsync("removeme", default))!;
+        await rosterA.DeleteAsync(row.Id, default);
+        Assert.Null(await rosterA.GetByMemberIdAsync("removeme", default));
+
+        // B still holds it, and one round hands it straight back.
+        await GossipRoundsAsync(4, a, b);
+        Assert.NotNull(await rosterA.GetByMemberIdAsync("removeme", default));
+    }
+
+    [Fact]
+    public async Task AMemberThatHasLeftStaysGoneAcrossTheCluster()
+    {
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+
+        string goneUrl;
+        await using (MemberHost gone = await MemberHost.StartAsync("removeme", Secret))
+        {
+            goneUrl = gone.Url;
+            await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+            await a.Resolve<MemberHandshakeService>().AddMemberAsync(gone.Url, null, default);
+            await GossipRoundsAsync(8, a, b);
+        }
+
+        // It is decommissioned and stopped. The operator removes it on A.
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow row = (await rosterA.GetByMemberIdAsync("removeme", default))!;
+        Assert.True(await rosterA.MarkLeftAsync(row.Id, DateTimeOffset.UtcNow, default));
+
+        await GossipRoundsAsync(6, a, b);
+
+        // B took the departure rather than handing the member back.
+        MemberRow asBSeesIt = (await b.Resolve<MembersStore>().GetByMemberIdAsync("removeme", default))!;
+        Assert.Equal(GossipState.Left, asBSeesIt.MembershipState);
+        Assert.True(GossipState.IsTerminal(asBSeesIt.MembershipState));
+
+        // And A still holds the departure rather than an absence gossip would repair.
+        Assert.Equal(
+            GossipState.Left,
+            (await rosterA.GetByMemberIdAsync("removeme", default))!.MembershipState);
+    }
+
+    [Fact]
+    public async Task ADepartedMemberIsReapedEverywhereOnceTheWindowPasses()
+    {
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
+        var publications = new SelfPublications();
+        var gossip = new GossipService(
+            members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
+            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
+            publications,
+            cluster.Options with { ReapMs = 1 },
+            NullLogger<GossipService>.Instance);
+
+        MemberRow row = MemberRow.New("removeme", MemberKind.Node) with { Url = "http://removeme:8080" };
+        await members.UpsertAsync(row, default);
+        await members.MarkLeftAsync(row.Id, DateTimeOffset.UtcNow.AddHours(-1), default);
+
+        await gossip.AdvanceFailureTimersAsync(default);
+
+        // The tombstone is what carried the departure; once every member has had it, the row goes.
+        Assert.Null(await members.GetAsync(row.Id, default));
+    }
+
+    [Fact]
+    public async Task AMemberThatIsStillRunningRefutesItsOwnRemovalAndReturns()
+    {
+        // Not a defect: only a member may raise its own incarnation, and it re-asserts alive above
+        // whatever was said about it. That is what stops a live member being buried by a false report,
+        // and it means removing one that is still participating is a request the mesh overturns.
+        //
+        // The refutation reaches it through a THIRD member, and it has to: the member that recorded the
+        // departure stops choosing it as a gossip partner, because there is no point syncing with
+        // somebody believed gone. So B is what carries the removal to it and its refutation back.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        await using MemberHost live = await MemberHost.StartAsync("still-running", Secret);
+
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(live.Url, null, default);
+        await GossipRoundsAsync(8, a);
+
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow row = (await rosterA.GetByMemberIdAsync("still-running", default))!;
+        await rosterA.MarkLeftAsync(row.Id, DateTimeOffset.UtcNow, default);
+
+        // Every member that learns the departure stops choosing it as a partner, so the removal only
+        // reaches it when IT gossips out — which a running member does.
+        await GossipRoundsAsync(10, a, b, live);
+
+        MemberRow after = (await rosterA.GetByMemberIdAsync("still-running", default))!;
+        Assert.Equal(GossipState.Alive, after.MembershipState);
+        Assert.True(after.Incarnation > row.Incarnation);
+    }
+
+    [Fact]
+    public async Task AMemberStopsGossipingWithOneItBelievesHasLeft()
+    {
+        // Which is why a departure sticks at all: the member that recorded it is not asking the departed
+        // one for its opinion every few seconds.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost live = await MemberHost.StartAsync("still-running", Secret);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(live.Url, null, default);
+
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow row = (await rosterA.GetByMemberIdAsync("still-running", default))!;
+        await rosterA.MarkLeftAsync(row.Id, DateTimeOffset.UtcNow, default);
+
+        await GossipRoundsAsync(8, a);
+
+        Assert.Equal(
+            GossipState.Left,
+            (await rosterA.GetByMemberIdAsync("still-running", default))!.MembershipState);
+    }
+
+    [Fact]
+    public async Task DisablingIsWhatRemovesAMemberThatWillNotLeave()
+    {
+        // The honest answer for a live member: disable is this member's own override of the shared-secret
+        // trust, and no gossip undoes it.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost live = await MemberHost.StartAsync("still-running", Secret);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(live.Url, null, default);
+
+        MembersStore rosterA = a.Resolve<MembersStore>();
+        MemberRow row = (await rosterA.GetByMemberIdAsync("still-running", default))!;
+        await rosterA.SetEnabledAsync(row.Id, false, default);
+
+        await GossipRoundsAsync(6, a, live);
+
+        Assert.False((await rosterA.GetByMemberIdAsync("still-running", default))!.Enabled);
+        Assert.Empty(await rosterA.ListEnabledAsync(default));
+    }
 }

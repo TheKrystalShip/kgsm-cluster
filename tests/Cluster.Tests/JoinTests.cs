@@ -160,7 +160,9 @@ public class JoinTests
         // over in the exchange, and the far side adopts it — which is what lets a member join with nothing
         // configured but the secret.
         await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
-        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        // Started knowing no address of its own, which is how a member comes up before anybody has
+        // reached it.
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret, seedOwnAddress: false);
 
         Assert.Empty(await b.Resolve<SelfIdentityStore>().CandidatesAsync(default));
 
