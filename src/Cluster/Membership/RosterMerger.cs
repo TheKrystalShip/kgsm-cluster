@@ -35,6 +35,10 @@ public readonly record struct MergeOutcome(MergeAction Action, long RaiseSelfTo 
 /// another with its own probe, an equal-incarnation gossiped suspect or dead does not override that: its
 /// own eyes outrank somebody else's report. Only a strictly higher incarnation — the member itself, or its
 /// operator, moving on — overrides first-hand liveness.</para>
+/// <para><b>A departure is a correction, never a lesson.</b> Terminal states travel so a member still
+/// holding an alive row is put right; they are not learned by a member holding no row at all. Reaping is a
+/// deletion, and anti-entropy repairs deletions — so a tombstone that inserts is one every member teaches
+/// back to whichever member reaped it first, forever.</para>
 /// <para><b>A local disable is absolute.</b> A row disabled here is never resurrected or altered by gossip:
 /// disable is this member's own override of the shared-secret trust.</para>
 /// </remarks>
@@ -55,8 +59,13 @@ public static class RosterMerger
             return new MergeOutcome(MergeAction.Ignore);
         }
 
+        // A member held nowhere here is not taught by a tombstone. A terminal report exists to correct a
+        // row that still says alive, and a member with no row has nothing to correct — learning one instead
+        // re-creates the row the reaper just dropped, stamped with a fresh state-changed clock, so the
+        // tombstone restarts its reap window on every member that hears it and ages out on none of them.
         if (existing is null)
-            return new MergeOutcome(MergeAction.Insert);
+            return new MergeOutcome(
+                GossipState.IsTerminal(incoming.State) ? MergeAction.Ignore : MergeAction.Insert);
 
         if (!existing.Enabled)
             return new MergeOutcome(MergeAction.Ignore);

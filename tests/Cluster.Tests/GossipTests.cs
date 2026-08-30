@@ -293,6 +293,71 @@ public class GossipTests
     }
 
     [Fact]
+    public void ATombstoneAboutAMemberWeDoNotHoldTeachesUsNothing()
+    {
+        // A terminal report exists to correct a row that still says alive. A member holding no row has
+        // nothing to correct, and learning one re-creates exactly what the reaper just dropped.
+        foreach (string terminal in new[] { GossipState.Left, GossipState.Dead })
+        {
+            Assert.Equal(MergeAction.Ignore, RosterMerger.Decide(
+                new SyncMember("member-gone", MemberKind.Node, [], 7, terminal, "v1"),
+                existing: null, "member-a", 0, existingFirstHandFresh: false).Action);
+        }
+    }
+
+    [Fact]
+    public void AMemberWeDoNotHoldIsStillLearnedWhileItIsLive()
+    {
+        // The guard above is about terminal states only: hearsay about a live member is how a member that
+        // nobody introduced to us joins the roster at all.
+        foreach (string live in new[] { GossipState.Alive, GossipState.Suspect })
+        {
+            Assert.Equal(MergeAction.Insert, RosterMerger.Decide(
+                new SyncMember("member-c", MemberKind.Node, [], 7, live, "v1"),
+                existing: null, "member-a", 0, existingFirstHandFresh: false).Action);
+        }
+    }
+
+    [Fact]
+    public async Task AReapedMemberIsNotTaughtBackByAMemberThatStillHoldsIt()
+    {
+        // Reaping is a deletion, and anti-entropy repairs deletions. Members reap on their own clocks, so
+        // whichever reaps first syncs with one that has not yet and learns the departure straight back —
+        // stamped with a fresh state-changed time, restarting the window it just finished serving. The
+        // roster then keeps every member it has ever lost, and "the holder is gone" stops being observable.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+
+        MemberHost gone = await MemberHost.StartAsync("member-gone", Secret);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(gone.Url, null, default);
+        await GossipRoundsAsync(6, a, b, gone);
+        // Stopped before it is removed: a member that is still running refutes its own departure, which is
+        // the refutation channel working and not what this test is about.
+        await gone.DisposeAsync();
+
+        MembersStore aMembers = a.Resolve<MembersStore>();
+        MembersStore bMembers = b.Resolve<MembersStore>();
+
+        MemberRow departing = (await aMembers.GetByMemberIdAsync("member-gone", default))!;
+        await aMembers.MarkLeftAsync(departing.Id, DateTimeOffset.UtcNow, default);
+        await GossipRoundsAsync(4, a, b);
+        Assert.Equal(
+            GossipState.Left,
+            (await bMembers.GetByMemberIdAsync("member-gone", default))!.MembershipState);
+
+        // A's tombstone ages out; B's has not, which is the ordinary case — the windows started at
+        // different times because the departure reached B a round later.
+        MemberRow aged = (await aMembers.GetByMemberIdAsync("member-gone", default))!;
+        await aMembers.UpsertAsync(aged with { StateChangedAt = DateTimeOffset.UtcNow.AddHours(-1) }, default);
+
+        await GossipRoundsAsync(4, a, b);
+
+        Assert.Null(await aMembers.GetByMemberIdAsync("member-gone", default));
+        Assert.NotNull(await bMembers.GetByMemberIdAsync("member-gone", default));
+    }
+
+    [Fact]
     public async Task AnAnchorsPublishedKeyReachesAJoiningMemberAtOnce()
     {
         // A key you verify sessions against is no use arriving a gossip round late: a member that joins

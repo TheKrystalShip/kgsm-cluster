@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.14]
+
+### Fixed
+
+- **A departed member was never forgotten: the reaper dropped its row and the next gossip round learned
+  it straight back.** A terminal report about a member the roster did not hold was inserted as a new row,
+  stamped with a fresh state-changed time. Members reap on their own clocks, so whichever reaped first
+  synced with one that had not yet, re-created the tombstone, and restarted the window it had just
+  finished serving — a loop with no end, visible only as a departed member sitting permanently in the
+  roster and a `reaped` line followed immediately by a `learned` line for the same member.
+
+  A tombstone is a correction, not a lesson: it travels so a member still holding an alive row is put
+  right, and a member holding no row has nothing to correct. Terminal reports about an unheld member are
+  ignored; hearsay about a live one still joins the roster as before.
+
+  Beyond the roster's own tidiness, this is what makes a capability's holder observably gone. A roster
+  that never forgets anybody is one in which `ClusterFacts.OrphanedAsync` can never report an orphaned
+  assignment, so a member standing by against a holder that will never answer looks identical to one
+  waiting on a holder that is merely slow.
+
 ## [1.0.0-dev.13]
 
 ### Fixed

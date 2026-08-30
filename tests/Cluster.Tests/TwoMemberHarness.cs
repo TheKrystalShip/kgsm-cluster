@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using TheKrystalShip.KGSM.Cluster.Identity;
 using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.Cluster.Messaging;
-using TheKrystalShip.KGSM.Cluster.Messaging;
 
 namespace TheKrystalShip.KGSM.Cluster.Tests;
 
