@@ -171,4 +171,35 @@ public class JoinTests
         IReadOnlyList<MemberCandidate> learned = await b.Resolve<SelfIdentityStore>().CandidatesAsync(default);
         Assert.Contains(learned, c => c.Url == b.Url.TrimEnd('/') && c.Client);
     }
+
+    [Fact]
+    public async Task ReJoiningThroughANewAddressUpdatesTheSameRow()
+    {
+        // Load-bearing and easy to refactor away by somebody who does not know it. Moving a member to a
+        // new address — putting an anchor behind a public name, say — is a re-introduction, and it has to
+        // land on the row that already exists. If it made a second one instead, moving an address on a
+        // live cluster would mean reassigning any capability the member holds away, removing it, adding
+        // it back and reassigning it in, because removing a member that holds one is refused.
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+        MemberHandshakeService handshake = a.Resolve<MemberHandshakeService>();
+
+        MemberAddResult first = await handshake.AddMemberAsync(b.Url, "Box", default);
+        Assert.Equal(MemberAddOutcome.Added, first.Outcome);
+
+        // The same member, reached by a different address it also answers on.
+        var bound = new Uri(b.Url);
+        string alias = $"http://member-b.lan:{bound.Port}";
+        MemberAddResult second = await handshake.AddMemberAsync(alias, null, default);
+
+        Assert.Equal(MemberAddOutcome.Added, second.Outcome);
+        // One row, keyed on the member's own id — not a second member that happens to answer alike.
+        Assert.Equal(first.Member!.Id, second.Member!.Id);
+        Assert.Single(await a.Resolve<MembersStore>().ListAsync(default));
+
+        MemberRow row = (await a.Resolve<MembersStore>().GetByMemberIdAsync("member-b", default))!;
+        Assert.Equal(alias, row.Url);
+        // And the operator's label survives a move it was not part of.
+        Assert.Equal("Box", row.Nickname);
+    }
 }
