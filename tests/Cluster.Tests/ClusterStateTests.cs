@@ -241,4 +241,68 @@ public class PublishedFactsTests
         Assert.Equal("abc", decoded["auth.publickey"]);
         Assert.Equal("k1", decoded["auth.kid"]);
     }
+
+    [Fact]
+    public async Task ReapingAMemberThatHoldsACapabilityLeavesTheAssignmentNamingNobodyPresent()
+    {
+        // The refusal to remove a holder covers the deliberate act. A holder whose machine simply dies
+        // reaches the same place without anybody removing anything: it goes suspect, then dead, then the
+        // reap window passes and the row goes — while the assignment still names it.
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var state = new ClusterStateStore(cluster.Store, cluster.Options);
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
+        var publications = new SelfPublications();
+        var gossip = new GossipService(
+            members, state, new SelfIncarnation(), identity,
+            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
+            publications,
+            cluster.Options with { ReapMs = 1 },
+            NullLogger<GossipService>.Instance);
+
+        MemberRow holder = MemberRow.New("auth-anchor", MemberKind.Anchor) with { Url = "http://gone:8080" };
+        await members.UpsertAsync(holder, default);
+        await state.TryClaimAsync(ClusterCapability.Auth, "auth-anchor", default);
+
+        await members.MarkLeftAsync(holder.Id, DateTimeOffset.UtcNow.AddHours(-1), default);
+        await gossip.AdvanceFailureTimersAsync(default);
+
+        Assert.Null(await members.GetByMemberIdAsync("auth-anchor", default));
+        // The assignment survives the member it names. Removing it is a decision nothing here may take,
+        // so what the package owes is that the state is findable rather than only deducible from a
+        // capability quietly not being served.
+        Assert.Equal("auth-anchor", await state.HolderAsync(ClusterCapability.Auth, default));
+
+        IReadOnlyList<ClusterAssignment> orphaned =
+            await new ClusterFacts(members, state).OrphanedAsync(default);
+        Assert.Single(orphaned);
+        Assert.Equal(ClusterCapability.Auth, orphaned[0].Capability);
+        Assert.Equal("auth-anchor", orphaned[0].MemberId);
+    }
+
+    [Fact]
+    public async Task AnAssignmentWhoseHolderIsPresentIsNotOrphaned()
+    {
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var state = new ClusterStateStore(cluster.Store, cluster.Options);
+
+        MemberRow holder = MemberRow.New("auth-anchor", MemberKind.Anchor) with { Url = "http://anchor:8080" };
+        await members.UpsertAsync(holder, default);
+        await state.TryClaimAsync(ClusterCapability.Auth, "auth-anchor", default);
+
+        Assert.Empty(await new ClusterFacts(members, state).OrphanedAsync(default));
+    }
+
+    [Fact]
+    public async Task ACapabilityHeldByNobodyIsNotOrphaned()
+    {
+        // Deliberately unheld is a decision, not a dangling reference.
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var state = new ClusterStateStore(cluster.Store, cluster.Options);
+        await state.AssignAsync(ClusterCapability.Auth, "", default);
+
+        Assert.Empty(await new ClusterFacts(members, state).OrphanedAsync(default));
+    }
 }

@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.10]
+
+### Added
+
+- `ClusterFacts.OrphanedAsync` — every capability assigned to a member that is no longer in the roster.
+  A holder can leave without anybody removing it: its machine dies, it goes suspect, then dead, and the
+  reap window passes. The assignment outlives it, every member stands by against a holder that will
+  never answer, and nothing errors because nothing failed. This is how that is found rather than
+  deduced from a capability quietly not being served.
+- Reaping a member that holds a capability logs at error level naming the capability. The reaper knows
+  both facts, so destroying the one silently is not something it should do.
+
 ## [1.0.0-dev.9]
 
 ### Fixed

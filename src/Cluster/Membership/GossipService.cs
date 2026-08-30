@@ -198,6 +198,19 @@ public sealed class GossipService(
                 {
                     if (row.StateChangedAt is { } since && now - since >= reapWindow)
                     {
+                        // A reaped member is gone from the roster, but nothing here removes what the
+                        // cluster assigned to it. Say so loudly: an assignment naming a member that is not
+                        // there leaves every other member standing by against a holder that will never
+                        // answer, and the only symptom is the capability quietly not being served.
+                        foreach (ClusterAssignment held in await clusterState.ListAsync(ct).ConfigureAwait(false))
+                        {
+                            if (!string.Equals(held.MemberId, row.MemberId, StringComparison.Ordinal)) continue;
+                            logger.LogError(
+                                "reaping {MemberId} leaves '{Capability}' assigned to a member no longer in " +
+                                "the roster — reassign it, or nothing serves that capability",
+                                row.MemberId, held.Capability);
+                        }
+
                         await members.DeleteAsync(row.Id, ct).ConfigureAwait(false);
                         logger.LogInformation("reaped {MemberId} ({State})", row.MemberId, row.MembershipState);
                     }
