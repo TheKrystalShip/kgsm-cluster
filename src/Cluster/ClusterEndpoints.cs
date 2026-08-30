@@ -270,34 +270,8 @@ public static class ClusterEndpoints
     private static async Task<(ClusterPrincipal? Principal, bool Handled)> AuthenticateAsync(
         HttpContext context, CancellationToken ct)
     {
-        IServiceProvider services = context.RequestServices;
-        var tokens = services.GetRequiredService<IClusterTokenService>();
-        var gate = services.GetRequiredService<IClusterMemberGate>();
-
-        string? token = ExtractBearerToken(context.Request);
-        if (token is null)
-        {
-            await ErrorAsync(context, StatusCodes.Status401Unauthorized, "invalid_cluster_token",
-                "missing bearer token", ct).ConfigureAwait(false);
-            return (null, true);
-        }
-
-        ClusterPrincipal? principal = await tokens.ValidateAsync(token).ConfigureAwait(false);
-        if (principal is null)
-        {
-            await ErrorAsync(context, StatusCodes.Status401Unauthorized, "invalid_cluster_token",
-                "invalid, expired, or unsigned cluster service token", ct).ConfigureAwait(false);
-            return (null, true);
-        }
-
-        if (!await gate.IsEnabledAsync(principal.MemberId).ConfigureAwait(false))
-        {
-            await ErrorAsync(context, StatusCodes.Status403Forbidden, "member_disabled",
-                $"member '{principal.MemberId}' is not an enabled member of this cluster", ct).ConfigureAwait(false);
-            return (null, true);
-        }
-
-        return (principal, false);
+        ClusterPrincipal? caller = await ClusterRequest.AuthenticateAsync(context).ConfigureAwait(false);
+        return (caller, caller is null);
     }
 
     /// <summary>The status and code each refusal answers with, so both sides of the handshake name the same
@@ -340,16 +314,6 @@ public static class ClusterEndpoints
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json; charset=utf-8";
         await JsonSerializer.SerializeAsync(context.Response.Body, value, typeInfo, ct).ConfigureAwait(false);
-    }
-
-    private static string? ExtractBearerToken(HttpRequest request)
-    {
-        string? header = request.Headers.Authorization.ToString();
-        if (string.IsNullOrWhiteSpace(header)) return null;
-        const string prefix = "Bearer ";
-        return header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? header[prefix.Length..].Trim()
-            : null;
     }
 
     /// <summary>

@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.12]
+
+### Fixed
+
+- **A store written by an earlier build never gained a later build's columns.** `CREATE TABLE IF NOT
+  EXISTS` creates and does not alter, so a member that had run before kept the table it had — and every
+  query naming `published`, added with per-member facts, threw once per tick. The member started,
+  served, answered health, and its gossip and liveness were dead in a log nobody reads: joined,
+  reachable, and not in the mesh at all.
+
+  A column added after a table shipped is now applied to the table that exists, and a store that still
+  cannot answer this build's queries stops the member instead of being carried on past. Indexes are
+  created last, after the columns they name — attempting one first is what turns an upgradeable store
+  into an unopenable one.
+
+### Added
+
+- `ClusterRequest.AuthenticateAsync` — the service-token check and the enabled-member gate, for a
+  member serving a member-to-member route of its own. It was private, so a member with its own such
+  route had to reimplement both, which is two implementations of one rule and two members able to
+  disagree about what the protocol is.
+
 ## [1.0.0-dev.11]
 
 ### Fixed

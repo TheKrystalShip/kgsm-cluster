@@ -51,6 +51,17 @@ else wedges the sender's queue behind a message it can never deliver.
 **The enabled-member gate keys on member id, never on a machine.** Two members on one machine are two
 members; disabling one must leave the other running.
 
+**A store that already exists is never altered by `CREATE TABLE IF NOT EXISTS`.** Every member that has
+ever been in a cluster has one, so adding a column means adding it to `ClusterStore.AddedColumns` *and*
+to `RequiredColumns` — the first applies it to the table that is there, the second refuses to open a
+store that still cannot answer this build's queries. Append to `AddedColumns`; never edit an entry,
+because what is written there has already run on somebody's disk. Indexes are created last, after the
+columns they name exist, or an upgradeable store becomes an unopenable one.
+
+The failure this replaces is the one worth remembering: a member starts, serves, answers health, and
+its gossip and liveness die once per tick in a log nobody reads — joined, reachable, and not in the
+mesh at all.
+
 **The retention window must exceed the retry TTL.** `ClusterOptions.Validate()` enforces it. A shorter
 window lets the ledger forget a message the outbox is still retrying, and the redelivery applies twice.
 
@@ -83,3 +94,12 @@ deliberate: the case the outbox exists for is a target that is **down** when a m
 returns later, and only a real restart on the same address proves it. `MemberHost.StartAsync` takes an
 explicit `url` for exactly that — a returning member has to answer where it did before, or the
 sender's queued row is addressed at nobody and the test proves nothing.
+
+Two harness details are load-bearing, and both exist because the harness had been hiding real behaviour:
+
+- **A member records an address for itself at startup**, as a deployment does the first time somebody
+  reaches it. Without one a member is reachable only by members it introduced itself, and a member
+  nobody can reach also cannot refute anything said about it.
+- **Members advertise a `.lan` name, not the loopback they bind to**, and `LoopbackResolvingHandler`
+  sends the connection where they actually listen. Loopback is never advertised, so a harness that
+  advertised it was proving something no deployment does.
