@@ -34,7 +34,8 @@ guard, so two members cannot disagree about what the protocol is.
 builder.Services.AddKgsmCluster(new ClusterOptions
 {
     MemberId  = "hotrod",
-    Secret    = configuration["Cluster:Secret"] ?? "",
+    Kind      = MemberKind.Node,
+    Secret    = ClusterConfiguration.Secret(builder.Configuration),
     StorePath = Path.Combine(stateDirectory, "cluster.db"),
 });
 
@@ -55,6 +56,11 @@ builder.Services.AddSingleton<IClusterMessageHandler, MyHandler>();
 
 A handler must be idempotent. A type nobody registered is acknowledged and dropped, so a newer member
 sending a type an older one has never heard of never wedges its queue.
+
+The secret comes from `/etc/kgsm/kgsm-cluster.env` as `Cluster__Secret`, loaded by each member's unit
+before its own env file. Read it through `ClusterConfiguration` rather than by hand: every member has to
+spell that key identically, and one that spells it differently reads a blank and concludes it is not
+clustered — with nothing in any log saying so.
 
 To send one, bring your own serializer metadata — the payload's shape is yours, so this package never
 reflects over it:
