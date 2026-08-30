@@ -35,5 +35,5 @@ public static class ClusterRoutes
 public static class ClusterProtocol
 {
     /// <summary>The protocol this build speaks.</summary>
-    public const int Current = 2;
+    public const int Current = 3;
 }

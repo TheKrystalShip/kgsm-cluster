@@ -106,7 +106,8 @@ internal sealed class TestNodeCardSource(IServiceProvider services, string apiVe
         var inner = new SelfMemberCardSource(
             services.GetRequiredService<ClusterOptions>(),
             services.GetRequiredService<SelfIdentityStore>(),
-            services.GetRequiredService<SelfIncarnation>());
+            services.GetRequiredService<SelfIncarnation>(),
+            services.GetRequiredService<SelfPublications>());
         MemberCard card = await inner.BuildAsync(ct);
         return card with { Node = new NodeFacts(apiVersion, "test-build", ["monitor"]) };
     }

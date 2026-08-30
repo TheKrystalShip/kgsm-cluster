@@ -10,9 +10,11 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// </summary>
 public sealed class GossipService(
     MembersStore members,
+    ClusterStateStore clusterState,
     SelfIncarnation selfIncarnation,
     SelfIdentityStore selfIdentity,
     IMemberCardSource cards,
+    SelfPublications publications,
     ClusterOptions options,
     ILogger<GossipService> logger)
 {
@@ -26,6 +28,28 @@ public sealed class GossipService(
     /// superseding state, refute reports about ourselves. Never writes the first-hand liveness triple.
     /// </summary>
     public async Task MergeIncomingAsync(IReadOnlyList<SyncMember> incoming, CancellationToken ct)
+        => await MergeIncomingAsync(incoming, null, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// Merge an incoming roster and the cluster state that came with it. The state is merged first: a
+    /// member learning it has been demoted should know that before it acts on anything else in the round.
+    /// Returns the capabilities whose holder changed.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> MergeIncomingAsync(
+        IReadOnlyList<SyncMember> incoming, IReadOnlyList<ClusterAssignment>? state, CancellationToken ct)
+    {
+        IReadOnlyList<string> reassigned = await clusterState.MergeAsync(state, ct).ConfigureAwait(false);
+        foreach (string capability in reassigned)
+        {
+            logger.LogInformation(
+                "cluster state: {Capability} is now held by {Holder}",
+                capability, await clusterState.HolderAsync(capability, ct).ConfigureAwait(false) ?? "nobody");
+        }
+        await MergeMembersAsync(incoming, ct).ConfigureAwait(false);
+        return reassigned;
+    }
+
+    private async Task MergeMembersAsync(IReadOnlyList<SyncMember> incoming, CancellationToken ct)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         string myMemberId = options.MemberId;
@@ -58,6 +82,7 @@ public sealed class GossipService(
                                 MembershipState = member.State,
                                 StateChangedAt = now,
                                 ApiVersion = member.ApiVersion ?? "",
+                                Published = PublishedFacts.Encode(member.Published),
                             }, ct).ConfigureAwait(false);
                         logger.LogInformation(
                             "learned member {MemberId} ({Kind}) via gossip (provisional)",
@@ -67,7 +92,7 @@ public sealed class GossipService(
                     case MergeAction.Update:
                         await members.UpdateMembershipAsync(
                             existing!.Id, member.State, member.Incarnation, now, member.Candidates,
-                            member.ApiVersion, ct).ConfigureAwait(false);
+                            member.ApiVersion, member.Published, ct).ConfigureAwait(false);
                         logger.LogDebug(
                             "member {MemberId} → {State}@{Incarnation} via gossip",
                             member.MemberId, member.State, member.Incarnation);
@@ -103,7 +128,8 @@ public sealed class GossipService(
             await selfIdentity.CandidatesAsync(ct).ConfigureAwait(false),
             selfIncarnation.Current,
             GossipState.Alive,
-            card.Node?.ApiVersion ?? "");
+            card.Node?.ApiVersion ?? "",
+            publications.Current);
 
         IReadOnlyList<MemberRow> enabled = await members.ListEnabledAsync(ct).ConfigureAwait(false);
         var roster = new List<SyncMember>(enabled.Count + 1) { self };
@@ -113,7 +139,7 @@ public sealed class GossipService(
                 continue;
             roster.Add(new SyncMember(
                 row.MemberId, row.Kind, MemberCandidates.Decode(row.Candidates), row.Incarnation,
-                row.MembershipState, row.ApiVersion));
+                row.MembershipState, row.ApiVersion, PublishedFacts.Decode(row.Published)));
         }
         return roster;
     }
@@ -153,7 +179,7 @@ public sealed class GossipService(
                     if (since is null || now - since.Value >= suspectWindow)
                     {
                         await members.UpdateMembershipAsync(
-                            row.Id, GossipState.Suspect, row.Incarnation, now, null, null, ct)
+                            row.Id, GossipState.Suspect, row.Incarnation, now, null, null, null, ct)
                             .ConfigureAwait(false);
                         logger.LogInformation("member {MemberId} → suspect (no liveness evidence)", row.MemberId);
                     }
@@ -163,7 +189,7 @@ public sealed class GossipService(
                     if (row.StateChangedAt is { } since && now - since >= suspectWindow)
                     {
                         await members.UpdateMembershipAsync(
-                            row.Id, GossipState.Dead, row.Incarnation, now, null, null, ct)
+                            row.Id, GossipState.Dead, row.Incarnation, now, null, null, null, ct)
                             .ConfigureAwait(false);
                         logger.LogInformation("member {MemberId} → dead (suspect timeout)", row.MemberId);
                     }
@@ -198,6 +224,10 @@ public sealed class GossipService(
     /// </summary>
     public Task RecordInboundContactAsync(string fromMemberId, CancellationToken ct) =>
         members.RecordAliveContactAsync(fromMemberId, DateTimeOffset.UtcNow, ct);
+
+    /// <summary>This member's copy of the cluster's own state, to send with its roster.</summary>
+    public Task<IReadOnlyList<ClusterAssignment>> BuildLocalStateAsync(CancellationToken ct) =>
+        clusterState.ListAsync(ct);
 
     /// <summary>
     /// The freshness predicate the merge consults, exposed so there is one definition of it. A member is

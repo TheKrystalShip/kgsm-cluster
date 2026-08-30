@@ -13,7 +13,8 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 public sealed class SelfMemberCardSource(
     ClusterOptions options,
     SelfIdentityStore selfIdentity,
-    SelfIncarnation selfIncarnation) : IMemberCardSource
+    SelfIncarnation selfIncarnation,
+    SelfPublications publications) : IMemberCardSource
 {
     /// <inheritdoc/>
     public async Task<MemberCard> BuildAsync(CancellationToken ct) => new(
@@ -22,5 +23,7 @@ public sealed class SelfMemberCardSource(
         options.Enabled,
         await selfIdentity.CandidatesAsync(ct).ConfigureAwait(false),
         selfIncarnation.Current,
-        ClusterProtocol.Current);
+        ClusterProtocol.Current,
+        Node: null,
+        Published: publications.Current);
 }

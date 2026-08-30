@@ -129,14 +129,14 @@ public class MembersStoreTests
         MemberRow unproven = Row("member-b");
         await store.UpsertAsync(unproven, default);
         await store.UpdateMembershipAsync(
-            unproven.Id, GossipState.Alive, 1, now, [new MemberCandidate("http://10.0.0.9:8080", true)], "v1", default);
+            unproven.Id, GossipState.Alive, 1, now, [new MemberCandidate("http://10.0.0.9:8080", true)], "v1", null, default);
         Assert.Equal("http://10.0.0.9:8080", (await store.GetAsync(unproven.Id, default))!.Url);
 
         MemberRow proven = Row("member-c");
         await store.UpsertAsync(proven, default);
         await store.PinAddressAsync(proven.Id, "http://10.0.0.3:8080", null, default);
         await store.UpdateMembershipAsync(
-            proven.Id, GossipState.Alive, 1, now, [new MemberCandidate("http://10.0.0.9:8080", true)], "v1", default);
+            proven.Id, GossipState.Alive, 1, now, [new MemberCandidate("http://10.0.0.9:8080", true)], "v1", null, default);
         // One short gossip round must not unpin an address this member knows works.
         Assert.Equal("http://10.0.0.3:8080", (await store.GetAsync(proven.Id, default))!.Url);
     }

@@ -33,6 +33,9 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// <param name="LastSeen">When this member was last successfully reached, or last authenticated an inbound
 /// call. Null when neither has happened.</param>
 /// <param name="ApiVersion">A node's route version as reported at handshake time. Empty for an anchor.</param>
+/// <param name="Published">What this member states about itself, encoded by
+/// <see cref="PublishedFacts"/>. Stored as it arrived and never interpreted here: what a key means
+/// belongs to whoever publishes it.</param>
 /// <param name="Enabled">The disable-list flag — the only local override to the shared-secret trust
 /// boundary. Flipping it to false rejects that member's calls without removing the row. Absence from the
 /// roster is not rejection; only an explicit false here is.</param>
@@ -51,6 +54,7 @@ public sealed record MemberRow(
     int? LatencyMs,
     DateTimeOffset? LastSeen,
     string ApiVersion,
+    string Published,
     bool Enabled)
 {
     /// <summary>A fresh row for a member nothing is yet known about beyond its identity.</summary>
@@ -69,6 +73,7 @@ public sealed record MemberRow(
         LatencyMs: null,
         LastSeen: null,
         ApiVersion: "",
+        Published: "",
         Enabled: true);
 }
 

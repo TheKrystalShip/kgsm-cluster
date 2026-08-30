@@ -16,19 +16,32 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// joining, which is a local read-side display only.</param>
 /// <param name="ApiVersion">A node's route version, propagated so a gossip-discovered node's version is
 /// known before this member authenticates it first-hand. Empty for an anchor, and empty when not yet known.</param>
+/// <param name="Published">What the member states about itself. Self-asserted and adopted under the same
+/// ordering as everything else it says about itself, so a strictly higher incarnation wins and nobody
+/// publishes on anybody else's behalf.</param>
 public sealed record SyncMember(
     string MemberId,
     string Kind,
     IReadOnlyList<MemberCandidate> Candidates,
     long Incarnation,
     string State,
-    string ApiVersion);
+    string ApiVersion,
+    IReadOnlyDictionary<string, string>? Published = null);
 
 /// <summary>The sync request — the caller's full roster view, including its own self-entry.</summary>
 /// <param name="From">The caller's member id, which equals its service token's <c>iss</c>.</param>
 /// <param name="Members">Every member the caller knows: its self-entry plus its peers.</param>
-public sealed record SyncRequest(string From, IReadOnlyList<SyncMember> Members);
+/// <param name="State">What the caller knows about the cluster itself, as distinct from its members —
+/// which member holds each capability. Converges by its own version rather than by any member's
+/// incarnation, because no member can assert it on the cluster's behalf.</param>
+public sealed record SyncRequest(
+    string From,
+    IReadOnlyList<SyncMember> Members,
+    IReadOnlyList<ClusterAssignment>? State = null);
 
 /// <summary>The sync response — the receiver's full roster view for the caller to merge back, the pull half
 /// of push-pull. The same shape as the request.</summary>
-public sealed record SyncResponse(string From, IReadOnlyList<SyncMember> Members);
+public sealed record SyncResponse(
+    string From,
+    IReadOnlyList<SyncMember> Members,
+    IReadOnlyList<ClusterAssignment>? State = null);

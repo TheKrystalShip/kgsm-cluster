@@ -93,6 +93,7 @@ public sealed class GossipWorker(
         }
 
         IReadOnlyList<SyncMember> roster = await gossip.BuildLocalRosterAsync(ct).ConfigureAwait(false);
+        IReadOnlyList<ClusterAssignment> state = await gossip.BuildLocalStateAsync(ct).ConfigureAwait(false);
         HttpClient http = httpClientFactory.CreateClient(HttpClientName);
         HttpResponseMessage? response = null;
         try
@@ -101,7 +102,7 @@ public sealed class GossipWorker(
                 HttpMethod.Post, $"{partner.Url.TrimEnd('/')}{ClusterRoutes.Sync}");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
             request.Content = JsonContent.Create(
-                new SyncRequest(options.MemberId, roster), ClusterJsonContext.Default.SyncRequest);
+                new SyncRequest(options.MemberId, roster, state), ClusterJsonContext.Default.SyncRequest);
 
             response = await http.SendAsync(request, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -117,7 +118,7 @@ public sealed class GossipWorker(
                 .DeserializeAsync(body, ClusterJsonContext.Default.SyncResponse, ct)
                 .ConfigureAwait(false);
             if (sync?.Members is not null)
-                await gossip.MergeIncomingAsync(sync.Members, ct).ConfigureAwait(false);
+                await gossip.MergeIncomingAsync(sync.Members, sync.State, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

@@ -54,6 +54,12 @@ public sealed record NodeFacts(string ApiVersion, string Build, IReadOnlyList<st
 /// <param name="Protocol">The record version this member speaks (<see cref="ClusterProtocol.Current"/>). A
 /// card from a build that predates the field carries <c>0</c>, which is a mismatch, which is the point.</param>
 /// <param name="Node">The node-only facts, absent on an anchor.</param>
+/// <param name="Published">
+/// What this member states about itself for others to read — a public key, an identifier, anything small
+/// and durable that is neither liveness nor an address. Carried on the card as well as in gossip so a
+/// member that has just joined holds it at once rather than after a round: a key you verify signatures
+/// with is no use arriving late.
+/// </param>
 public sealed record MemberCard(
     string MemberId,
     string Kind,
@@ -61,7 +67,8 @@ public sealed record MemberCard(
     IReadOnlyList<MemberCandidate> Candidates,
     long Incarnation,
     int Protocol = 0,
-    NodeFacts? Node = null);
+    NodeFacts? Node = null,
+    IReadOnlyDictionary<string, string>? Published = null);
 
 /// <summary>An address one member reports back to the other: "this is where I reached you."</summary>
 /// <param name="Url">The absolute address.</param>
@@ -83,10 +90,17 @@ public sealed record ReflectedAddress(string Url, string Provenance);
 /// transports the list so that a panel served from one member reaches every other without a per-member
 /// allowlist, and each member decides for itself what to do with it. A headless member ignores it.
 /// </param>
+/// <param name="State">
+/// What the sender knows about the cluster itself — which member holds each capability. Carried at join
+/// rather than left to the first gossip round, because a member that joins without it can believe a
+/// capability is unheld and claim one that is already held. It converges either way; carrying it here
+/// means the race never opens.
+/// </param>
 public sealed record IntroduceExchange(
     MemberCard Self,
     ReflectedAddress? YouAre,
-    IReadOnlyList<string> PanelOrigins);
+    IReadOnlyList<string> PanelOrigins,
+    IReadOnlyList<ClusterAssignment>? State = null);
 
 /// <summary>
 /// Builds this member's card — who it is, what it runs, and every address it knows it answers at. A seam

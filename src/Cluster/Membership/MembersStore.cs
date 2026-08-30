@@ -15,7 +15,7 @@ public sealed class MembersStore(ClusterStore store)
 {
     private const string Columns =
         "id, member_id, kind, url, candidates, address_verified, nickname, incarnation, status, " +
-        "membership_state, state_changed_at, latency_ms, last_seen, api_version, enabled";
+        "membership_state, state_changed_at, latency_ms, last_seen, api_version, published, enabled";
 
     private readonly SemaphoreSlim _memberIdGate = new(1, 1);
 
@@ -74,7 +74,8 @@ public sealed class MembersStore(ClusterStore store)
     /// </summary>
     public async Task UpdateMembershipAsync(
         string id, string membershipState, long incarnation, DateTimeOffset stateChangedAt,
-        IReadOnlyList<MemberCandidate>? candidates, string? apiVersion, CancellationToken ct)
+        IReadOnlyList<MemberCandidate>? candidates, string? apiVersion,
+        IReadOnlyDictionary<string, string>? published, CancellationToken ct)
     {
         MemberRow? row = await GetAsync(id, ct).ConfigureAwait(false);
         if (row is null) return;
@@ -85,6 +86,9 @@ public sealed class MembersStore(ClusterStore store)
             Incarnation = incarnation,
             StateChangedAt = stateChangedAt,
             ApiVersion = string.IsNullOrWhiteSpace(apiVersion) ? row.ApiVersion : apiVersion,
+            // Replaced wholesale rather than merged: what a member states about itself is the whole
+            // statement, so withdrawing a fact has to be expressible.
+            Published = published is null ? row.Published : PublishedFacts.Encode(published),
         };
 
         if (candidates is { Count: > 0 })
@@ -208,9 +212,10 @@ public sealed class MembersStore(ClusterStore store)
         command.CommandText = """
             INSERT OR REPLACE INTO members
                 (id, member_id, kind, url, candidates, address_verified, nickname, incarnation, status,
-                 membership_state, state_changed_at, latency_ms, last_seen, api_version, enabled)
+                 membership_state, state_changed_at, latency_ms, last_seen, api_version, published, enabled)
             VALUES ($id, $memberId, $kind, $url, $candidates, $addressVerified, $nickname, $incarnation,
-                    $status, $membershipState, $stateChangedAt, $latencyMs, $lastSeen, $apiVersion, $enabled);
+                    $status, $membershipState, $stateChangedAt, $latencyMs, $lastSeen, $apiVersion,
+                    $published, $enabled);
             """;
         command.Parameters.AddWithValue("$id", row.Id);
         command.Parameters.AddWithValue("$memberId", row.MemberId);
@@ -227,6 +232,7 @@ public sealed class MembersStore(ClusterStore store)
         SqliteValues.Bind(command, "$latencyMs", row.LatencyMs);
         SqliteValues.Bind(command, "$lastSeen", row.LastSeen is { } seen ? SqliteValues.Stamp(seen) : null);
         command.Parameters.AddWithValue("$apiVersion", row.ApiVersion);
+        command.Parameters.AddWithValue("$published", row.Published);
         command.Parameters.AddWithValue("$enabled", row.Enabled ? 1 : 0);
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
@@ -258,7 +264,8 @@ public sealed class MembersStore(ClusterStore store)
                 LatencyMs: reader.IsDBNull(11) ? null : reader.GetInt32(11),
                 LastSeen: SqliteValues.ReadStampOrNull(reader, 12),
                 ApiVersion: reader.GetString(13),
-                Enabled: reader.GetInt32(14) != 0));
+                Published: reader.GetString(14),
+                Enabled: reader.GetInt32(15) != 0));
         }
         return rows;
     }

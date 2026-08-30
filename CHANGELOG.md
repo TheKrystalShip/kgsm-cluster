@@ -5,6 +5,30 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.8]
+
+### Added
+
+- **Published facts** — `SelfPublications`, a small map a member states about itself, carried on its card
+  and in its gossip entry and adopted under the same ordering as everything else it says about itself. The
+  archetype is a public key: a member that signs what others verify has to hand them the key. Capped per
+  value and per member, because every fact rides every round.
+- **Cluster assignments** — `ClusterStateStore`, which member holds each capability. Cluster state rather
+  than member state, so it carries its own version instead of riding an incarnation. `TryClaimAsync` sets
+  only if nobody holds it, so a second holder starting elsewhere becomes a candidate rather than a second
+  authority; `AssignAsync` is the deliberate overwrite a person makes. A map, not a policy: what holding a
+  capability means belongs to whoever consumes it.
+- Both travel in the join exchange as well as in gossip, so a member holds them the moment it joins. A
+  member that joined without the assignment could believe a capability was unheld and claim one already
+  held.
+- `ClusterFacts.FromHolderAsync` reads a published fact **from the member the cluster says holds a
+  capability**, which is the safe way to read one: any member can state a key, only the holder is believed
+  for it.
+
+### Changed
+
+- `ClusterProtocol.Current` is 3.
+
 ## [1.0.0-dev.7]
 
 ### Added

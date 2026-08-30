@@ -56,6 +56,12 @@ public static class ClusterServiceCollectionExtensions
         services.AddSingleton<MembersStore>();
         services.AddSingleton<SelfIdentityStore>();
         services.AddSingleton<SelfIncarnation>();
+        // What this member states about itself for others to read. A member that states nothing carries an
+        // empty set, which is the normal case.
+        services.AddSingleton<SelfPublications>();
+        // The cluster's own state, as distinct from its members': which member holds each capability.
+        services.AddSingleton<ClusterStateStore>();
+        services.AddSingleton<ClusterFacts>();
         services.AddSingleton<GossipService>();
         // The identity and addresses on a card are the package's own; a route version, a build and a set of
         // leaves are not. So this states the first three and nothing else — which is the complete card for

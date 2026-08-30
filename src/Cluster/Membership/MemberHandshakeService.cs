@@ -63,6 +63,7 @@ public sealed record MemberAddResult(
 public sealed class MemberHandshakeService(
     IHttpClientFactory httpClientFactory,
     MembersStore members,
+    ClusterStateStore clusterState,
     SelfIdentityStore selfIdentity,
     IMemberCardSource cards,
     IClusterTokenService clusterTokens,
@@ -197,7 +198,8 @@ public sealed class MemberHandshakeService(
             // The address a human wrote down, which this request is about to prove answers. It is the one
             // thing the far side cannot work out for itself, and the reason it needs no configuration.
             new ReflectedAddress(target, SelfIdentityStore.OperatorProvenance),
-            await selfIdentity.PanelOriginsAsync(ct).ConfigureAwait(false));
+            await selfIdentity.PanelOriginsAsync(ct).ConfigureAwait(false),
+            await clusterState.ListAsync(ct).ConfigureAwait(false));
 
         IntroduceExchange? incoming;
         try
@@ -264,6 +266,10 @@ public sealed class MemberHandshakeService(
         foreach (string origin in incoming.PanelOrigins ?? [])
             await selfIdentity.RecordPanelOriginAsync(origin, ct).ConfigureAwait(false);
 
+        // What the cluster has already decided, taken at join. A member that joins without it can believe
+        // a capability is unheld and claim one that is already held.
+        await clusterState.MergeAsync(incoming.State, ct).ConfigureAwait(false);
+
         MemberRow member = await RecordAsync(incoming, target, nickname, ct).ConfigureAwait(false);
         return new MemberAddResult(MemberAddOutcome.Added, member);
     }
@@ -302,6 +308,8 @@ public sealed class MemberHandshakeService(
         foreach (string origin in incoming.PanelOrigins ?? [])
             await selfIdentity.RecordPanelOriginAsync(origin, ct).ConfigureAwait(false);
 
+        await clusterState.MergeAsync(incoming.State, ct).ConfigureAwait(false);
+
         // The caller's own candidates are all we have to reach it by — it named no address for itself that
         // we can verify yet, so the row starts unverified and the poller settles it.
         await RecordAsync(incoming, address: null, nickname: null, ct).ConfigureAwait(false);
@@ -311,7 +319,8 @@ public sealed class MemberHandshakeService(
             observedAddress is null
                 ? null
                 : new ReflectedAddress(observedAddress, SelfIdentityStore.PeerObservedProvenance),
-            await selfIdentity.PanelOriginsAsync(ct).ConfigureAwait(false));
+            await selfIdentity.PanelOriginsAsync(ct).ConfigureAwait(false),
+            await clusterState.ListAsync(ct).ConfigureAwait(false));
 
         return (MemberAddOutcome.Added, answer);
     }
@@ -353,6 +362,7 @@ public sealed class MemberHandshakeService(
                 Status = address is null ? existing?.Status ?? MemberStatus.Unknown : MemberStatus.Reachable,
                 LastSeen = address is null ? existing?.LastSeen : now,
                 ApiVersion = card.Node?.ApiVersion ?? existing?.ApiVersion ?? "",
+                Published = PublishedFacts.Encode(card.Published),
                 Enabled = existing?.Enabled ?? true,
             };
             return row with

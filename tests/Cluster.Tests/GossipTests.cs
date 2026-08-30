@@ -178,9 +178,12 @@ public class GossipTests
         // only after the reap window — three steps, so a single missed tick never buries anybody.
         using var cluster = new TestCluster();
         var members = new MembersStore(cluster.Store);
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
+        var publications = new SelfPublications();
         var gossip = new GossipService(
-            members, new SelfIncarnation(), new SelfIdentityStore(cluster.Store, cluster.Options),
-            new SelfMemberCardSource(cluster.Options, new SelfIdentityStore(cluster.Store, cluster.Options), new SelfIncarnation()),
+            members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
+            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
+            publications,
             cluster.Options with { SuspectMs = 1, ReapMs = 1 },
             NullLogger<GossipService>.Instance);
 
@@ -214,9 +217,11 @@ public class GossipTests
         using var cluster = new TestCluster();
         var members = new MembersStore(cluster.Store);
         var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
+        var publications = new SelfPublications();
         var gossip = new GossipService(
-            members, new SelfIncarnation(), identity,
-            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation()),
+            members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
+            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
+            publications,
             cluster.Options with { SuspectMs = 60_000 },
             NullLogger<GossipService>.Instance);
 
@@ -285,5 +290,143 @@ public class GossipTests
         Assert.Equal(MergeAction.Ignore, RosterMerger.Decide(
             new SyncMember("member-b", MemberKind.Node, [], 99, GossipState.Alive, "v1"),
             disabled, "member-a", 0, existingFirstHandFresh: false).Action);
+    }
+
+    [Fact]
+    public async Task AnAnchorsPublishedKeyReachesAJoiningMemberAtOnce()
+    {
+        // A key you verify sessions against is no use arriving a gossip round late: a member that joins
+        // and immediately serves a request would refuse a perfectly good session.
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "auth-anchor", Secret, kind: MemberKind.Anchor);
+        anchor.Resolve<SelfPublications>().Publish("auth.publickey", "-----BEGIN PUBLIC KEY-----abc");
+
+        await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret);
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(anchor.Url, null, default);
+
+        // No gossip round has run.
+        MemberRow row = (await node.Resolve<MembersStore>().GetByMemberIdAsync("auth-anchor", default))!;
+        Assert.Equal("-----BEGIN PUBLIC KEY-----abc", row.Read("auth.publickey"));
+    }
+
+    [Fact]
+    public async Task APublishedFactConvergesToAMemberThatOnlyHeardAboutIt()
+    {
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "auth-anchor", Secret, kind: MemberKind.Anchor);
+        anchor.Resolve<SelfPublications>().Publish("auth.publickey", "key-v1");
+
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(anchor.Url, null, default);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+        await GossipRoundsAsync(8, a);
+
+        MemberRow asBSeesIt = (await b.Resolve<MembersStore>().GetByMemberIdAsync("auth-anchor", default))!;
+        Assert.Equal("key-v1", asBSeesIt.Read("auth.publickey"));
+    }
+
+    [Fact]
+    public async Task TheAssignmentReachesEveryMember()
+    {
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "auth-anchor", Secret, kind: MemberKind.Anchor);
+        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
+        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
+
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(anchor.Url, null, default);
+        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
+
+        // The anchor claims it, as it would on first start.
+        Assert.True(await anchor.Resolve<ClusterStateStore>()
+            .TryClaimAsync(ClusterCapability.Auth, "auth-anchor", default));
+
+        await GossipRoundsAsync(10, anchor, a, b);
+
+        foreach (MemberHost host in new[] { anchor, a, b })
+        {
+            Assert.Equal(
+                "auth-anchor",
+                await host.Resolve<ClusterStateStore>().HolderAsync(ClusterCapability.Auth, default));
+        }
+    }
+
+    [Fact]
+    public async Task AJoiningMemberLearnsTheAssignmentBeforeItCouldClaim()
+    {
+        // The race carrying state at join closes: a second anchor that joined without it would see nobody
+        // holding the capability and claim one that is already held.
+        await using MemberHost first = await MemberHost.StartAsync(
+            "anchor-one", Secret, kind: MemberKind.Anchor);
+        await first.Resolve<ClusterStateStore>().TryClaimAsync(ClusterCapability.Auth, "anchor-one", default);
+
+        await using MemberHost second = await MemberHost.StartAsync(
+            "anchor-two", Secret, kind: MemberKind.Anchor);
+        await second.Resolve<MemberHandshakeService>().AddMemberAsync(first.Url, null, default);
+
+        ClusterStateStore state = second.Resolve<ClusterStateStore>();
+        Assert.Equal("anchor-one", await state.HolderAsync(ClusterCapability.Auth, default));
+        // So its own claim is refused and it knows to stand down.
+        Assert.False(await state.TryClaimAsync(ClusterCapability.Auth, "anchor-two", default));
+        Assert.False(await state.IsHolderAsync(ClusterCapability.Auth, default));
+    }
+
+    [Fact]
+    public async Task AReassignmentTravelsAndTheOldHolderLearnsItIsDemoted()
+    {
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "anchor-one", Secret, kind: MemberKind.Anchor);
+        await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret);
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(anchor.Url, null, default);
+        await anchor.Resolve<ClusterStateStore>().TryClaimAsync(ClusterCapability.Auth, "anchor-one", default);
+        await GossipRoundsAsync(6, anchor, node);
+        Assert.True(await anchor.Resolve<ClusterStateStore>().IsHolderAsync(ClusterCapability.Auth, default));
+
+        // An admin reassigns from the panel, which runs on the node.
+        await node.Resolve<ClusterStateStore>().AssignAsync(ClusterCapability.Auth, "anchor-two", default);
+        await GossipRoundsAsync(6, anchor, node);
+
+        Assert.False(await anchor.Resolve<ClusterStateStore>().IsHolderAsync(ClusterCapability.Auth, default));
+        Assert.Equal(
+            "anchor-two",
+            await anchor.Resolve<ClusterStateStore>().HolderAsync(ClusterCapability.Auth, default));
+    }
+
+    [Fact]
+    public async Task AKeyIsReadFromTheHolderAndNotFromWhoeverStatesOne()
+    {
+        // The provenance rule. Any member holding the cluster secret can state a key; only the member the
+        // cluster says holds the capability is believed for it.
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "auth-anchor", Secret, kind: MemberKind.Anchor);
+        anchor.Resolve<SelfPublications>().Publish("auth.publickey", "the-real-key");
+
+        await using MemberHost impostor = await MemberHost.StartAsync("member-x", Secret);
+        impostor.Resolve<SelfPublications>().Publish("auth.publickey", "a-substituted-key");
+
+        await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret);
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(anchor.Url, null, default);
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(impostor.Url, null, default);
+        await node.Resolve<ClusterStateStore>().AssignAsync(ClusterCapability.Auth, "auth-anchor", default);
+
+        string? key = await node.Resolve<ClusterFacts>()
+            .FromHolderAsync(ClusterCapability.Auth, "auth.publickey", default);
+
+        Assert.Equal("the-real-key", key);
+    }
+
+    [Fact]
+    public async Task WithNoHolderThereIsNoKeyToRead()
+    {
+        await using MemberHost impostor = await MemberHost.StartAsync("member-x", Secret);
+        impostor.Resolve<SelfPublications>().Publish("auth.publickey", "a-substituted-key");
+
+        await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret);
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(impostor.Url, null, default);
+
+        // Nobody holds auth, so a member stating a key for it is simply not consulted.
+        Assert.Null(await node.Resolve<ClusterFacts>()
+            .FromHolderAsync(ClusterCapability.Auth, "auth.publickey", default));
     }
 }

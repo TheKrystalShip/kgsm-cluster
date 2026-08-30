@@ -160,6 +160,7 @@ public sealed class ClusterStore : IHostedService
             latency_ms       INTEGER NULL,
             last_seen        TEXT NULL,
             api_version      TEXT NOT NULL,
+            published        TEXT NOT NULL DEFAULT '',
             enabled          INTEGER NOT NULL
         );
 
@@ -179,5 +180,12 @@ public sealed class ClusterStore : IHostedService
         );
 
         CREATE INDEX IF NOT EXISTS ix_self_facts_kind ON self_facts (kind);
+
+        CREATE TABLE IF NOT EXISTS cluster_state (
+            capability TEXT PRIMARY KEY,
+            member_id  TEXT NOT NULL,
+            version    INTEGER NOT NULL,
+            set_by     TEXT NOT NULL
+        );
         """;
 }
