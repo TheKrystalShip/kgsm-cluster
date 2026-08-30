@@ -15,8 +15,7 @@ public class CoResidentMembersTests
     private const string Secret = "co-resident-secret";
 
     private static string StatePath(string unit) =>
-        // Distinct directories, because that is what StateDirectory= gives two units. A store named from
-        // the directory alone would collide here, which is exactly the failure this shape has to exclude.
+        // A directory each, because that is what StateDirectory= gives two units.
         Path.Combine(Path.GetTempPath(), $"kgsm-{unit}-{Guid.NewGuid():N}", "cluster.db");
 
     private static void Prepare(string path) => Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -132,5 +131,28 @@ public class CoResidentMembersTests
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM members;";
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    [Fact]
+    public async Task TwoMembersSharingADirectoryStillHoldSeparateRosters()
+    {
+        // A member's store is named per member, not fixed within a directory. Two members that happen to
+        // share one — co-located units pointed at the same place, or a consumer deriving the path from
+        // the directory rather than from its own database — would otherwise share a roster and an outbox,
+        // which nothing notices until one of them disables somebody.
+        string shared = Path.Combine(Path.GetTempPath(), $"kgsm-shared-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(shared);
+
+        await using MemberHost far = await MemberHost.StartAsync("hotbox", Secret);
+        await using MemberHost node = await MemberHost.StartAsync(
+            "hotrod", Secret, dbPath: Path.Combine(shared, "kgsm-api.cluster.db"));
+        await using MemberHost anchor = await MemberHost.StartAsync(
+            "auth-anchor", Secret, dbPath: Path.Combine(shared, "kgsm-auth.cluster.db"),
+            kind: MemberKind.Anchor);
+
+        await node.Resolve<MemberHandshakeService>().AddMemberAsync(far.Url, null, default);
+
+        Assert.Single(await node.Resolve<MembersStore>().ListAsync(default));
+        Assert.Empty(await anchor.Resolve<MembersStore>().ListAsync(default));
     }
 }
