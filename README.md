@@ -77,6 +77,12 @@ await bus.EnqueueAsync("account.disabled", payload, MyJsonContext.Default.MyPayl
 - **A handler per type it cares about**, idempotent by construction.
 - **An address other members can reach it at.**
 
+## The protocol
+
+`docs/cluster-message-bus.md` is the authority for what crosses the wire: the envelope, the status
+codes, the storage, the drainer, the receive algorithm, and what the delivery guarantee is and is not.
+It lives here, with the code it describes.
+
 ## Delivery semantics
 
 At-least-once, applied exactly once by the dedupe ledger plus idempotent handlers. No ordering:

@@ -7,7 +7,9 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 `TheKrystalShip.KGSM.Cluster` — one package, published to GitHub Packages, giving any KGSM component
 cluster membership and durable member-to-member messaging. It exists so that **joining a cluster does
 not require being, or running, `kgsm-api`**. The workspace authority for the shape it establishes is
-`../cluster-transport-plan.md`; the protocol's own authority is `../kgsm-api/docs/cluster-message-bus-plan.md`.
+`../cluster-transport-plan.md`. The protocol — envelope, wire, storage, delivery semantics — is
+`docs/cluster-message-bus.md`, in this repo because a contract that lives away from its code drifts
+from it unnoticed.
 
 Members, not peers. A cluster has members; a member is a **node** (runs the engine and game servers,
 hosts leaves) or an **anchor** (provides one capability to the whole cluster). Node-or-anchor is a
