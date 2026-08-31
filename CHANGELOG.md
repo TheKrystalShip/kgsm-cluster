@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — standing on a capability, once for every anchor
+
+`ClusterCapabilityWorker` claims a capability nobody holds, re-reads who does, and reports each change
+of standing to whatever serves it. Every anchor does exactly this — claim, re-read, stand down — and a
+second copy of it would be a second reading of when a member may serve.
+
+Three standings rather than two: not clustered is not standing by. A standalone install has no
+assignment to read and serves what it serves; collapsing the two would make one refuse its own work.
+
+`OnStandingAsync` is called on every pass rather than only on a change, because a side effect outside
+this member's own state — a published fact, a file several members read — can be undone by something
+else and has to be reconciled rather than written once.
+
+`ClusterCapability.Assistant`, beside `Auth`. A capability is a plain string, and two members spelling
+one differently agree about nothing while reporting no error at all.
+
 ## [1.0.0-dev.16]
 
 ### Fixed

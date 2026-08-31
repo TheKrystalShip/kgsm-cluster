@@ -44,4 +44,8 @@ public static class ClusterCapability
 {
     /// <summary>The cluster's accounts: who holds the store, and the only member that writes it.</summary>
     public const string Auth = "auth";
+
+    /// <summary>The cluster's assistant: the member a person's questions and staged actions reach,
+    /// wherever in the cluster the servers they are about are.</summary>
+    public const string Assistant = "assistant";
 }
