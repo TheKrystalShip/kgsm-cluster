@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -201,7 +200,7 @@ public sealed class MemberLatencyPoller(
             // A per-request message rather than a header on the shared named client: probes for every
             // member run concurrently off one client, so a default header would race.
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{address}{ClusterRoutes.Identity}");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            ClusterCall.Authorize(request, token);
             response = await http.SendAsync(request, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

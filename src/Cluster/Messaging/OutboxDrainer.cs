@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -155,7 +154,7 @@ public sealed class OutboxDrainer : BackgroundService
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            ClusterCall.Authorize(request, token);
             HttpClient http = _httpClientFactory.CreateClient(HttpClientName);
             response = await http.SendAsync(request, ct).ConfigureAwait(false);
         }

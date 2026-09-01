@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -208,7 +207,7 @@ public sealed class MemberHandshakeService(
             {
                 Content = JsonContent.Create(outgoing, ClusterJsonContext.Default.IntroduceExchange),
             };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            ClusterCall.Authorize(request, token);
 
             HttpClient client = httpClientFactory.CreateClient(HttpClientName);
             using HttpResponseMessage response = await client.SendAsync(request, ct).ConfigureAwait(false);

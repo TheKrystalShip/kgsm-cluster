@@ -5,7 +5,29 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0-dev.18]
+
+### Added — acting for a person, and presenting a member's own credential
+
+`MemberActing` names how one member says who it is acting for: the `X-Kgsm-Acting` handle, the claim the
+receiver stamps for the member that vouched, and the scheme the call is authenticated under. The names
+live here, in the transport every member already speaks, because a surface that only ever *sends* one —
+a chat surface relaying a turn — needs the spelling and nothing about accounts at all. Resolving that
+handle to an account and a tier stays where the accounts are.
+
+`ClusterCall` is the outbound mirror of `ClusterRequest.AuthenticateAsync`: present this member's service
+token, and optionally name the person the call acts for. Public for the same reason its inbound twin is —
+a member with its own member-to-member calls has to present exactly what this package's own callers
+present, and two implementations of that is two members disagreeing about the protocol. The token is
+passed in rather than minted inside, because a fan-out across the roster deliberately mints once and
+reuses; minting inside would quietly turn one signature into one per peer. The handshake, the latency
+poller, the gossip worker and the outbox drainer all go through it.
+
+A blank acting handle writes no header, leaving an ordinary member-to-member call — the honest shape for
+a sweep with nobody behind it, where the receiver refuses anything that needed a person rather than the
+caller acting as nobody with a machine's credential.
+
+## [1.0.0-dev.17]
 
 ### Added — standing on a capability, once for every anchor
 

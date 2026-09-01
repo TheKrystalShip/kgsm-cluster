@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -100,7 +99,7 @@ public sealed class GossipWorker(
         {
             using var request = new HttpRequestMessage(
                 HttpMethod.Post, $"{partner.Url.TrimEnd('/')}{ClusterRoutes.Sync}");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            ClusterCall.Authorize(request, token);
             request.Content = JsonContent.Create(
                 new SyncRequest(options.MemberId, roster, state), ClusterJsonContext.Default.SyncRequest);
 
