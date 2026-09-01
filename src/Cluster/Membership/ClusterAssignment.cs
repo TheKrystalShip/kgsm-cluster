@@ -48,4 +48,21 @@ public static class ClusterCapability
     /// <summary>The cluster's assistant: the member a person's questions and staged actions reach,
     /// wherever in the cluster the servers they are about are.</summary>
     public const string Assistant = "assistant";
+
+    /// <summary>The cluster's chat surface: the member that carries the Discord bot.</summary>
+    /// <remarks>
+    /// <para>
+    /// A placement fact, and the thing a reader resolves to find the bot at all — its own surfaces are
+    /// served by the member holding this and by no other, the same way a turn goes to whoever holds
+    /// <see cref="Assistant"/>.
+    /// </para>
+    /// <para>
+    /// It does not switch a bot off. Each bot announces the events of the machine it reads, so two of
+    /// them in one cluster report two different fleets rather than the same one twice. What they must
+    /// not share is a Discord GUILD: two bots set up in one server answer every command twice and post
+    /// every announcement twice, and that is a thing a person configures rather than something the
+    /// cluster can see.
+    /// </para>
+    /// </remarks>
+    public const string Bot = "bot";
 }

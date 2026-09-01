@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.19]
+
+### Added — `bot`, the cluster's chat surface
+
+`ClusterCapability.Bot` names the member that carries the Discord bot. It is a placement fact and the
+thing a reader resolves to find the bot's own surfaces, the way a turn resolves to whoever holds
+`Assistant`.
+
+It does not switch a bot off. Each bot announces the events of the machine whose journal it reads, so
+two in one cluster report two different fleets rather than one twice. What they cannot share is a
+Discord guild — two bots set up in one server answer every command twice — and that is configured
+rather than something the cluster can observe.
+
 ## [1.0.0-dev.18]
 
 ### Added — acting for a person, and presenting a member's own credential
