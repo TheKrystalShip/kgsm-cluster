@@ -28,7 +28,7 @@ public class CoResidentMembersTests
         Prepare(nodeState);
         Prepare(anchorState);
 
-        await using MemberHost far = await MemberHost.StartAsync("hotbox", Secret);
+        await using MemberHost far = await MemberHost.StartAsync("node-b", Secret);
         await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret, dbPath: nodeState);
         await using MemberHost anchor = await MemberHost.StartAsync(
             "auth-anchor", Secret, dbPath: anchorState, kind: MemberKind.Anchor);
@@ -37,7 +37,7 @@ public class CoResidentMembersTests
         // from that, because it has its own roster and nobody told it anything.
         await node.Resolve<MemberHandshakeService>().AddMemberAsync(far.Url, null, default);
 
-        Assert.NotNull(await node.Resolve<MembersStore>().GetByMemberIdAsync("hotbox", default));
+        Assert.NotNull(await node.Resolve<MembersStore>().GetByMemberIdAsync("node-b", default));
         Assert.Empty(await anchor.Resolve<MembersStore>().ListAsync(default));
 
         // And the reverse: what the anchor joins is the anchor's, not the machine's.
@@ -55,7 +55,7 @@ public class CoResidentMembersTests
         Prepare(nodeState);
         Prepare(anchorState);
 
-        await using MemberHost far = await MemberHost.StartAsync("hotbox", Secret);
+        await using MemberHost far = await MemberHost.StartAsync("node-b", Secret);
         await using MemberHost anchor = await MemberHost.StartAsync(
             "auth-anchor", Secret, dbPath: anchorState, kind: MemberKind.Anchor);
 
@@ -72,7 +72,7 @@ public class CoResidentMembersTests
 
         await anchor.Resolve<MemberLatencyPoller>().RunTickAsync(default);
 
-        MemberRow row = (await members.GetByMemberIdAsync("hotbox", default))!;
+        MemberRow row = (await members.GetByMemberIdAsync("node-b", default))!;
         Assert.Equal(MemberStatus.Reachable, row.Status);
         Assert.Equal(GossipState.Alive, row.MembershipState);
     }
@@ -85,7 +85,7 @@ public class CoResidentMembersTests
         string nodeState = StatePath("kgsm-api");
         Prepare(nodeState);
 
-        await using MemberHost far = await MemberHost.StartAsync("hotbox", Secret, dbPath: nodeState);
+        await using MemberHost far = await MemberHost.StartAsync("node-b", Secret, dbPath: nodeState);
         MembersStore members = far.Resolve<MembersStore>();
 
         await members.UpsertAsync(MemberRow.New("hotrod", MemberKind.Node) with { Url = "http://hotrod:8080" }, default);
@@ -112,7 +112,7 @@ public class CoResidentMembersTests
         Prepare(nodeState);
         Prepare(anchorState);
 
-        await using MemberHost far = await MemberHost.StartAsync("hotbox", Secret);
+        await using MemberHost far = await MemberHost.StartAsync("node-b", Secret);
         await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret, dbPath: nodeState);
         await using MemberHost anchor = await MemberHost.StartAsync(
             "auth-anchor", Secret, dbPath: anchorState, kind: MemberKind.Anchor);
@@ -143,7 +143,7 @@ public class CoResidentMembersTests
         string shared = Path.Combine(Path.GetTempPath(), $"kgsm-shared-{Guid.NewGuid():N}");
         Directory.CreateDirectory(shared);
 
-        await using MemberHost far = await MemberHost.StartAsync("hotbox", Secret);
+        await using MemberHost far = await MemberHost.StartAsync("node-b", Secret);
         await using MemberHost node = await MemberHost.StartAsync(
             "hotrod", Secret, dbPath: Path.Combine(shared, "kgsm-api.cluster.db"));
         await using MemberHost anchor = await MemberHost.StartAsync(

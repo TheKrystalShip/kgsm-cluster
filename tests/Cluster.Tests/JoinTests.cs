@@ -122,8 +122,8 @@ public class JoinTests
     [InlineData("http://127.0.0.1:8080")]
     [InlineData("http://10.0.0.5:8080")]
     [InlineData("http://192.168.1.4:8080")]
-    [InlineData("http://hotbox")]
-    [InlineData("http://hotbox.lan")]
+    [InlineData("http://node-b")]
+    [InlineData("http://node-b.lan")]
     [InlineData("https://panel.example.com")]
     public void APrivateOrEncryptedAddressIsAcceptable(string url)
     {

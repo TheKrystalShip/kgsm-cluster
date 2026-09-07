@@ -239,7 +239,7 @@ public class AdvertisableCandidateTests
     [Theory]
     [InlineData("http://10.0.0.5:8080")]
     [InlineData("https://auth.thekrystalship.com")]
-    [InlineData("http://hotbox.lan:8080")]
+    [InlineData("http://node-b.lan:8080")]
     public void AnAddressAnotherMachineCanUseIsAdvertised(string url)
     {
         Assert.Single(MemberCandidates.Advertisable([new MemberCandidate(url, Client: true)]));

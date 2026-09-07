@@ -43,7 +43,7 @@ public class GossipTests
         // A member that arrives entirely as hearsay still has to be known as a node or an anchor, or the
         // first thing anybody does with it is wrong.
         await using MemberHost node = await MemberHost.StartAsync("hotrod", Secret);
-        await using MemberHost other = await MemberHost.StartAsync("hotbox", Secret);
+        await using MemberHost other = await MemberHost.StartAsync("node-b", Secret);
         await using MemberHost anchor = await MemberHost.StartAsync("auth-anchor", Secret, kind: MemberKind.Anchor);
 
         await node.Resolve<MemberHandshakeService>().AddMemberAsync(other.Url, null, default);

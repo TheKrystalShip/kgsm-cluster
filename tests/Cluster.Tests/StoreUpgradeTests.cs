@@ -17,7 +17,7 @@ public class StoreUpgradeTests : IDisposable
 
     private ClusterOptions Options => new()
     {
-        MemberId = "hotbox", Secret = "upgrade-secret", StorePath = _path,
+        MemberId = "node-b", Secret = "upgrade-secret", StorePath = _path,
     };
 
     private async Task WriteAsync(string sql)
