@@ -21,13 +21,22 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// the table, so configuration stays the single statement of itself.
 /// </para>
 /// <para>
+/// <b>An assigned address comes next.</b> A name the cluster gave this member and that it serves
+/// (<see cref="ISelfAddressSource"/>) follows the configured public address and leads everything
+/// reflected: reflection reports where somebody once reached this member, and an assigned name is where
+/// the cluster says it is reached now.
+/// </para>
+/// <para>
 /// <b>Panel origins are carried, not interpreted.</b> They travel with the join exchange so a panel served
 /// from one member reaches every other without a per-member allowlist, and what a member does with the
 /// list — a browser-facing one consults it for CORS, a headless one ignores it — is that member's business.
 /// </para>
 /// </summary>
-public sealed class SelfIdentityStore(ClusterStore store, ClusterOptions options)
+public sealed class SelfIdentityStore(
+    ClusterStore store, ClusterOptions options, IEnumerable<ISelfAddressSource>? assigned = null)
 {
+    private readonly ISelfAddressSource[] _assigned = [.. assigned ?? []];
+
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     // Reference assignment is atomic; a racing read may briefly see the prior list and converges on the
@@ -104,6 +113,9 @@ public sealed class SelfIdentityStore(ClusterStore store, ClusterOptions options
         }
 
         Offer(options.PublicBaseUrl, client: true);
+        foreach (ISelfAddressSource source in _assigned)
+            foreach (string address in source.Addresses)
+                Offer(address, client: true);
         Offer(options.GossipUrl, client: false);
 
         foreach (SelfFact fact in await FactsAsync(ct).ConfigureAwait(false))

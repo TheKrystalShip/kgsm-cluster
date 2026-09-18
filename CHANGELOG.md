@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.20]
+
+### Added — addresses a member is given at runtime
+
+`ISelfAddressSource` lets a member offer addresses it was assigned and is serving — a name the
+cluster's DNS anchor gave it, once its certificate is installed. Every registered source is read on each
+resolve and offered as a client address behind the configured public address and ahead of everything
+reflected, so a member configured with no address advertises the name the cluster serves it at. Nothing
+from a source is stored, so a name that moves to another member stops being advertised here the moment
+it stops being served.
+
 ## [1.0.0-dev.19]
 
 ### Added — `bot`, the cluster's chat surface

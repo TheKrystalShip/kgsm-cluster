@@ -62,6 +62,50 @@ public sealed class SelfAddressPrecedenceTests
     }
 
     [Fact]
+    public async Task An_assigned_name_beats_everything_reflected_and_yields_to_configuration()
+    {
+        using var cluster = new TestCluster();
+        var assigned = new Assigned("https://walter.nodes.example");
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options with { PublicBaseUrl = "" }, [assigned]);
+
+        // An operator's pasted URL is the strongest reflected statement, and it still describes where
+        // somebody once reached this member rather than the name the cluster serves it at now.
+        await identity.RecordCandidateAsync(
+            "https://hotrod.example", client: true, SelfIdentityStore.OperatorProvenance, default);
+
+        Assert.Equal(
+            "https://walter.nodes.example",
+            MemberCandidates.ClientUrl(await identity.CandidatesAsync(default)));
+
+        var configured = new SelfIdentityStore(
+            cluster.Store, cluster.Options with { PublicBaseUrl = "https://panel-configured.example" }, [assigned]);
+        Assert.Equal(
+            "https://panel-configured.example",
+            MemberCandidates.ClientUrl(await configured.CandidatesAsync(default)));
+    }
+
+    [Fact]
+    public async Task An_assigned_name_no_longer_served_is_no_longer_offered()
+    {
+        using var cluster = new TestCluster();
+        var assigned = new Assigned("https://auth.anchors.example");
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options with { PublicBaseUrl = "" }, [assigned]);
+
+        Assert.Contains(await identity.CandidatesAsync(default), c => c.Url == "https://auth.anchors.example");
+
+        // The capability moved: the name now points at another member, and advertising it here would
+        // send every caller to somebody else.
+        assigned.Current = [];
+        Assert.DoesNotContain(await identity.CandidatesAsync(default), c => c.Url == "https://auth.anchors.example");
+    }
+
+    private sealed class Assigned(params string[] addresses) : ISelfAddressSource
+    {
+        public IReadOnlyList<string> Current { get; set; } = addresses;
+        public IReadOnlyList<string> Addresses => Current;
+    }
+
+    [Fact]
     public async Task An_address_only_other_members_use_is_never_the_one_a_browser_is_given()
     {
         using var cluster = new TestCluster();
