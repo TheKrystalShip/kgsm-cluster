@@ -351,7 +351,7 @@ public class GossipTests
         // A's tombstone ages out; B's has not, which is the ordinary case — the windows started at
         // different times because the departure reached B a round later.
         MemberRow aged = (await aMembers.GetByMemberIdAsync("member-gone", default))!;
-        await aMembers.UpsertAsync(aged with { StateChangedAt = DateTimeOffset.UtcNow.AddHours(-1) }, default);
+        await aMembers.UpsertAsync(aged with { StateChangedAt = DateTimeOffset.UtcNow.AddDays(-8) }, default);
 
         await GossipRoundsAsync(4, a, b);
 
@@ -737,7 +737,7 @@ public class GossipTests
             members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
             new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
             publications,
-            cluster.Options with { ReapMs = 1 },
+            cluster.Options with { ReapMs = 1, LeftReapMs = 1 },
             NullLogger<GossipService>.Instance);
 
         MemberRow row = MemberRow.New("removeme", MemberKind.Node) with { Url = "http://removeme:8080" };
@@ -748,6 +748,38 @@ public class GossipTests
 
         // The tombstone is what carried the departure; once every member has had it, the row goes.
         Assert.Null(await members.GetAsync(row.Id, default));
+    }
+
+    [Fact]
+    public async Task ADepartureOutlivesTheWindowADeadMemberIsReapedOn()
+    {
+        // A member that was down when somebody was removed learns it only from a peer still holding the
+        // row, so the departure is kept far longer than a guess about liveness is.
+        using var cluster = new TestCluster();
+        var members = new MembersStore(cluster.Store);
+        var identity = new SelfIdentityStore(cluster.Store, cluster.Options);
+        var publications = new SelfPublications(new SelfIncarnation());
+        var gossip = new GossipService(
+            members, new ClusterStateStore(cluster.Store, cluster.Options), new SelfIncarnation(), identity,
+            new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
+            publications,
+            (cluster.Options with { ReapMs = 1 }).Validate(),
+            NullLogger<GossipService>.Instance);
+
+        DateTimeOffset hourAgo = DateTimeOffset.UtcNow.AddHours(-1);
+        MemberRow removed = MemberRow.New("removed", MemberKind.Node) with { Url = "http://removed:8080" };
+        MemberRow dead = MemberRow.New("offline", MemberKind.Node) with
+        {
+            Url = "http://offline:8080", MembershipState = GossipState.Dead, StateChangedAt = hourAgo,
+        };
+        await members.UpsertAsync(removed, default);
+        await members.UpsertAsync(dead, default);
+        await members.MarkLeftAsync(removed.Id, hourAgo, default);
+
+        await gossip.AdvanceFailureTimersAsync(default);
+
+        Assert.Null(await members.GetAsync(dead.Id, default));
+        Assert.Equal(GossipState.Left, (await members.GetAsync(removed.Id, default))!.MembershipState);
     }
 
     [Fact]

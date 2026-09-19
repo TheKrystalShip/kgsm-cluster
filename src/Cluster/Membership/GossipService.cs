@@ -179,7 +179,7 @@ public sealed class GossipService(
     /// <summary>
     /// Advance the failure timers off the last-evidence clock: an alive member with no liveness evidence
     /// for the suspect window becomes suspect; a suspect still silent past that window becomes dead; a dead
-    /// or departed member past the reap window is removed.
+    /// member past the reap window is removed, and a departed one past the longer departure window.
     /// <para>
     /// <b>Evidence is mutual and arrives from either direction</b> — this member's own successful probe, or
     /// an authenticated inbound call from the other. Both stamp last-seen. So a member that cannot be
@@ -198,6 +198,7 @@ public sealed class GossipService(
         IReadOnlyList<MemberRow> rows = await members.ListAsync(ct).ConfigureAwait(false);
         var suspectWindow = TimeSpan.FromMilliseconds(options.SuspectMs);
         var reapWindow = TimeSpan.FromMilliseconds(options.ReapMs);
+        var leftWindow = TimeSpan.FromMilliseconds(Math.Max(options.ReapMs, options.LeftReapMs));
 
         foreach (MemberRow row in rows)
         {
@@ -228,7 +229,8 @@ public sealed class GossipService(
                 }
                 else if (GossipState.IsTerminal(row.MembershipState))
                 {
-                    if (row.StateChangedAt is { } since && now - since >= reapWindow)
+                    TimeSpan window = row.MembershipState == GossipState.Left ? leftWindow : reapWindow;
+                    if (row.StateChangedAt is { } since && now - since >= window)
                     {
                         // A reaped member is gone from the roster, but nothing here removes what the
                         // cluster assigned to it. Say so loudly: an assignment naming a member that is not

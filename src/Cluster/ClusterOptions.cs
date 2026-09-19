@@ -89,8 +89,19 @@ public sealed record ClusterOptions
     /// </summary>
     public int SuspectMs { get; init; } = 30000;
 
-    /// <summary>How long (ms) a dead or departed member's row survives before it is removed. Floor 1000.</summary>
+    /// <summary>How long (ms) a dead member's row survives before it is removed. Floor 1000.</summary>
     public int ReapMs { get; init; } = 300000;
+
+    /// <summary>
+    /// How long (ms) a departed member's row survives before it is removed: seven days by default, never
+    /// less than <see cref="ReapMs"/>.
+    /// </summary>
+    /// <remarks>
+    /// A departure is a decision somebody made, and a member that was down when it was made learns it
+    /// only from a peer still holding the row. Held for as long as a member is plausibly away, it reaches
+    /// one that returns; a dead row is a guess about liveness and is dropped on the short window.
+    /// </remarks>
+    public int LeftReapMs { get; init; } = 604_800_000;
 
     /// <summary>
     /// Whether this member is part of a cluster — a non-blank <see cref="Secret"/>. Everything the
@@ -106,6 +117,7 @@ public sealed record ClusterOptions
     public ClusterOptions Validate()
     {
         int retryTtlDays = Math.Max(1, RetryTtlDays);
+        int reapMs = Math.Max(1000, ReapMs);
         return this with
         {
             DrainMs = Math.Max(100, DrainMs),
@@ -116,7 +128,8 @@ public sealed record ClusterOptions
             GossipMs = Math.Max(250, GossipMs),
             PollMs = Math.Max(250, PollMs),
             SuspectMs = Math.Max(1000, SuspectMs),
-            ReapMs = Math.Max(1000, ReapMs),
+            ReapMs = reapMs,
+            LeftReapMs = Math.Max(reapMs, LeftReapMs),
         };
     }
 }

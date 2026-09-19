@@ -257,10 +257,10 @@ public class PublishedFactsTests
             members, state, new SelfIncarnation(), identity,
             new SelfMemberCardSource(cluster.Options, identity, new SelfIncarnation(), publications),
             publications,
-            cluster.Options with { ReapMs = 1 },
+            cluster.Options with { ReapMs = 1, LeftReapMs = 1 },
             NullLogger<GossipService>.Instance);
 
-        MemberRow holder = MemberRow.New("auth-anchor", MemberKind.Anchor) with { Url = "http://gone:8080" };
+        MemberRow holder =MemberRow.New("auth-anchor", MemberKind.Anchor) with { Url = "http://gone:8080" };
         await members.UpsertAsync(holder, default);
         await state.TryClaimAsync(ClusterCapability.Auth, "auth-anchor", default);
 

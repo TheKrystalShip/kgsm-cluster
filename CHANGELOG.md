@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.21]
+
+### Changed — a departure is held for seven days
+
+A removed member's `left` row is reaped after `LeftReapMs` — seven days by default, never less than
+`ReapMs` — rather than the reap window a dead member's row is dropped on. A departure is a decision, and
+a member that was down when it was made learns it only from a peer still holding the row; a dead row is
+a guess about liveness and keeps the short window. The Control Panel already shows a departed member as
+`left` and connects to none.
+
 ## [1.0.0-dev.20]
 
 ### Added — addresses a member is given at runtime
