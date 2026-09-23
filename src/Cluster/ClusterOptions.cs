@@ -34,6 +34,12 @@ public sealed record ClusterOptions
     /// </summary>
     public required string StorePath { get; init; }
 
+    /// <summary>
+    /// The record a machine keeps of the cluster it founded: the fingerprint of the secret it generated,
+    /// written once by the install that founded it. Read through <see cref="ClusterFounding"/>.
+    /// </summary>
+    public string FoundedPath { get; init; } = ClusterFounding.DefaultPath;
+
     /// <summary>How often (ms) the outbox drainer ticks. Floor 100.</summary>
     public int DrainMs { get; init; } = 1000;
 

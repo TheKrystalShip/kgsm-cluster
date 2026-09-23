@@ -62,6 +62,17 @@ before its own env file. Read it through `ClusterConfiguration` rather than by h
 spell that key identically, and one that spells it differently reads a blank and concludes it is not
 clustered — with nothing in any log saying so.
 
+**A member's store belongs to the cluster whose secret it was written under.** It records the secret's
+fingerprint, and a member started with a different secret finds its roster, capability assignments and
+queued messages discarded before anything reads them, and knows nobody until it is added to its new
+cluster. Changing the secret is how a machine moves to another cluster, so nothing about the old one is
+cleared by hand. A rotation keeps everything: a store recorded under `SecretPrevious` is carried over.
+
+`ClusterFounding.IsFoundedHere` says whether the machine founded the cluster a member is in — its
+founding record, `/etc/kgsm/cluster-founded` (`FoundedPath`), names the secret the member holds. The
+record is written once, by the install that generated the secret, so a machine that has since taken
+another cluster's secret did not found the cluster it is in.
+
 To send one, bring your own serializer metadata — the payload's shape is yours, so this package never
 reflects over it:
 

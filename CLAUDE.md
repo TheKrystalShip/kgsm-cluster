@@ -62,6 +62,14 @@ The failure this replaces is the one worth remembering: a member starts, serves,
 its gossip and liveness die once per tick in a log nobody reads — joined, reachable, and not in the
 mesh at all.
 
+**The store is bound to the secret it was written under.** `store_meta` records the secret's fingerprint,
+and opening the file under a different secret empties `members`, `cluster_state`, `outbox` and `inbox` —
+everything learned from the old cluster — before any read. Carried into a new cluster, an old assignment
+gossips as current, and the capability tie-break (higher version, then the member id that sorts later) can
+hand it the new cluster's accounts. `self_facts` stays: a member's own addresses describe its network, not
+its cluster. A file recorded under `SecretPrevious` is a rotation and keeps everything; a file with no
+fingerprint yet is recorded without discarding, because it cannot say which cluster wrote it.
+
 **What a member says about itself is only heard when its incarnation moves.** Published facts, addressing
 and kind all ride the self-entry, and an entry at an incarnation the receiver already holds supersedes
 nothing. So changing the fact set raises this member's counter, and a member that finds the mesh ahead of it

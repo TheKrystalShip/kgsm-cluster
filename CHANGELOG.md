@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.22]
+
+### Added — a member's store belongs to one cluster
+
+The store records the fingerprint of the secret it was written under. Opened under a different secret, it
+discards the roster, the capability assignments and the queued messages learned from the old cluster
+before anything reads them; a rotation, recorded under `SecretPrevious`, keeps everything. A machine that
+founded its own cluster moves to another by taking its secret, and its members' memory of the old
+cluster's assignments never competes with the new one's.
+
+`ClusterFounding.IsFoundedHere` reads the machine's founding record (`FoundedPath`, default
+`/etc/kgsm/cluster-founded`) and answers whether it names the secret the member holds.
+`ClusterFounding.Fingerprint` is the SHA-256 the install writes there.
+
 ## [1.0.0-dev.21]
 
 ### Changed — a departure is held for seven days

@@ -22,10 +22,22 @@ namespace TheKrystalShip.KGSM.Cluster.Storage;
 /// call arriving before startup has run — or from a test host that never starts hosted services — still
 /// works.
 /// </para>
+/// <para>
+/// <b>The file belongs to one cluster: the one whose secret it was written under.</b> Its roster, its
+/// capability assignments and its queued messages were all learned from that cluster's members, so a
+/// member given a different secret opens a file describing a cluster it is no longer in. Carried into
+/// the new one, that state is gossiped as current — an old assignment of the accounts competes with
+/// the real holder, and the tie-break can hand it the new cluster's accounts. So the file records the
+/// secret's fingerprint, and opening it under a different secret discards everything learned from the
+/// old cluster before anything reads it. A rotation is not a different cluster: a file recorded under
+/// <see cref="ClusterOptions.SecretPrevious"/> is carried over.
+/// </para>
 /// </remarks>
 public sealed class ClusterStore : IHostedService
 {
     private readonly string _connectionString;
+    private readonly string _secret;
+    private readonly string _secretPrevious;
     private readonly ILogger<ClusterStore> _logger;
     private readonly SemaphoreSlim _ensureGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
@@ -34,6 +46,8 @@ public sealed class ClusterStore : IHostedService
     public ClusterStore(ClusterOptions options, ILogger<ClusterStore> logger)
     {
         _logger = logger;
+        _secret = options.Secret;
+        _secretPrevious = options.SecretPrevious;
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = options.StorePath,
@@ -118,6 +132,7 @@ public sealed class ClusterStore : IHostedService
             // Only now: an index over a column the store predates cannot be created, and trying before
             // the column is added is what turns an upgradeable store into an unopenable one.
             await ExecuteAsync(connection, IndexSchema, ct).ConfigureAwait(false);
+            await BindToSecretAsync(connection, ct).ConfigureAwait(false);
             _ensured = true;
         }
         finally { _ensureGate.Release(); }
@@ -150,6 +165,7 @@ public sealed class ClusterStore : IHostedService
             "api_version", "published", "enabled"]),
         ("self_facts", ["id", "kind", "value", "client", "provenance", "last_seen"]),
         ("cluster_state", ["capability", "member_id", "version", "set_by"]),
+        ("store_meta", ["key", "value"]),
     ];
 
     private static async Task ExecuteAsync(SqliteConnection connection, string sql, CancellationToken ct)
@@ -191,6 +207,81 @@ public sealed class ClusterStore : IHostedService
             $"The cluster store is missing {string.Join(", ", missing)} and cannot be brought to the shape " +
             "this build needs. It holds only membership and queued messages, both of which re-converge, so " +
             "the repair is to delete the file and let the member re-join.");
+    }
+
+    /// <summary>The tables holding what a member learned from its cluster, as opposed to about itself.</summary>
+    /// <remarks>
+    /// <c>self_facts</c> is not among them: the addresses a member has for itself describe the network
+    /// it sits on, which does not change with the cluster it is in.
+    /// </remarks>
+    private static readonly string[] LearnedFromTheCluster = ["members", "cluster_state", "outbox", "inbox"];
+
+    private const string SecretFingerprintKey = "secret_fingerprint";
+
+    /// <summary>
+    /// Record which cluster this file belongs to, and empty it of another cluster's state.
+    /// </summary>
+    private async Task BindToSecretAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        // A member with no secret is in no cluster, and there is nothing to bind the file to.
+        if (string.IsNullOrWhiteSpace(_secret))
+            return;
+
+        string current = ClusterFounding.Fingerprint(_secret);
+        string? recorded = await ReadMetaAsync(connection, SecretFingerprintKey, ct).ConfigureAwait(false);
+
+        if (recorded == current)
+            return;
+
+        bool rotated = !string.IsNullOrWhiteSpace(_secretPrevious)
+            && recorded == ClusterFounding.Fingerprint(_secretPrevious);
+
+        await using SqliteTransaction tx = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        // Recorded with nothing discarded when there is no fingerprint yet: a file that predates the
+        // record cannot say which cluster it was written under, and the member is far likelier to be
+        // upgrading in place than to have changed its secret in the same restart.
+        if (recorded is not null && !rotated)
+        {
+            foreach (string table in LearnedFromTheCluster)
+            {
+                await using SqliteCommand clear = connection.CreateCommand();
+                clear.Transaction = tx;
+                // Concatenated from constants above, never from anything a caller supplies.
+                clear.CommandText = "DELETE FROM " + table + ";";
+                await clear.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+        }
+
+        await using (SqliteCommand record = connection.CreateCommand())
+        {
+            record.Transaction = tx;
+            record.CommandText = """
+                INSERT INTO store_meta (key, value) VALUES ($key, $value)
+                ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+                """;
+            record.Parameters.AddWithValue("$key", SecretFingerprintKey);
+            record.Parameters.AddWithValue("$value", current);
+            await record.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+
+        if (recorded is not null && !rotated)
+        {
+            _logger.LogWarning(
+                "Cluster store: it held the state of a cluster whose secret this member no longer holds. "
+                + "Discarded the roster, the capability assignments and the queued messages learned there; "
+                + "this member knows nobody until it is added to its new cluster.");
+        }
+    }
+
+    private static async Task<string?> ReadMetaAsync(SqliteConnection connection, string key, CancellationToken ct)
+    {
+        await using SqliteCommand read = connection.CreateCommand();
+        read.CommandText = "SELECT value FROM store_meta WHERE key = $key;";
+        read.Parameters.AddWithValue("$key", key);
+        return await read.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
     }
 
     private static async Task<IReadOnlySet<string>> ColumnsAsync(
@@ -274,6 +365,13 @@ public sealed class ClusterStore : IHostedService
             member_id  TEXT NOT NULL,
             version    INTEGER NOT NULL,
             set_by     TEXT NOT NULL
+        );
+
+        -- What the file itself is: which cluster's secret it was written under.
+
+        CREATE TABLE IF NOT EXISTS store_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
         """;
 
