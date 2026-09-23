@@ -21,6 +21,11 @@ public enum MergeAction
     /// <summary>The report is about us, agrees we are alive, and carries an incarnation ahead of our own —
     /// what a restart leaves behind. Climb past it so this member can be heard again. No row is written.</summary>
     CatchUpSelf,
+
+    /// <summary>The report is about us at our own incarnation, but carries facts we no longer state — a
+    /// restart that changed what this member says and counted back up to exactly where the previous process
+    /// stopped. Raise one past it so what we say now supersedes. No row is written.</summary>
+    RestateSelf,
 }
 
 /// <summary>The decision, plus the incarnation to jump to when refuting.</summary>
@@ -58,7 +63,8 @@ public static class RosterMerger
         MemberRow? existing,
         string myMemberId,
         long selfIncarnation,
-        bool existingFirstHandFresh)
+        bool existingFirstHandFresh,
+        IReadOnlyDictionary<string, string>? selfPublished = null)
     {
         // A report about ourselves — never a row; refute it if it is stale and negative.
         if (string.Equals(incoming.MemberId, myMemberId, StringComparison.Ordinal))
@@ -71,6 +77,13 @@ public static class RosterMerger
             // it is alive, agreed to be alive, and unable to change one word of its own entry.
             if (incoming.Incarnation > selfIncarnation)
                 return new MergeOutcome(MergeAction.CatchUpSelf, incoming.Incarnation + 1);
+            // Level, and holding what the previous process said rather than what this one says: a restart
+            // that published a different fact counted back up to exactly where the last process stopped,
+            // and a tie supersedes nothing. Only a difference raises, so at rest — the mesh echoing what we
+            // say at our own incarnation — nothing moves.
+            if (incoming.Incarnation == selfIncarnation && selfPublished is not null
+                && !SameFacts(incoming.Published, selfPublished))
+                return new MergeOutcome(MergeAction.RestateSelf, incoming.Incarnation + 1);
             return new MergeOutcome(MergeAction.Ignore);
         }
 
@@ -100,5 +113,19 @@ public static class RosterMerger
         if (existingFirstHandFresh) return false;
 
         return GossipState.Precedence(incoming.State) > GossipState.Precedence(existing.MembershipState);
+    }
+
+    /// <summary>Whether two fact sets say the same thing: the same keys, each with the same value.</summary>
+    private static bool SameFacts(IReadOnlyDictionary<string, string>? held, IReadOnlyDictionary<string, string> stated)
+    {
+        held ??= PublishedFacts.None;
+        if (held.Count != stated.Count)
+            return false;
+        foreach ((string key, string value) in stated)
+        {
+            if (!held.TryGetValue(key, out string? other) || !string.Equals(value, other, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
     }
 }

@@ -267,6 +267,43 @@ public class GossipTests
     }
 
     [Fact]
+    public void AMeshHoldingWhatWeUsedToSayAtOurIncarnationIsSuperseded()
+    {
+        // A restart that changed one fact and published as many as before counts back up to exactly the
+        // incarnation the mesh holds, and a tie supersedes nothing — so the new fact would never be heard.
+        var stated = new Dictionary<string, string> { ["auth.issuer"] = "https://auth.example" };
+        var held = new SyncMember("member-a", MemberKind.Anchor, [], 3, GossipState.Alive, "v1",
+            new Dictionary<string, string> { ["auth.issuer"] = "kgsm" });
+
+        MergeOutcome outcome = RosterMerger.Decide(
+            held, existing: null, myMemberId: "member-a", selfIncarnation: 3, existingFirstHandFresh: false,
+            selfPublished: stated);
+
+        Assert.Equal(MergeAction.RestateSelf, outcome.Action);
+        Assert.Equal(4, outcome.RaiseSelfTo);
+    }
+
+    [Fact]
+    public void AMeshEchoingWhatWeSayRaisesNothing()
+    {
+        // At rest every member reports our own entry back to us; climbing on that would raise the
+        // incarnation once per round forever.
+        var stated = new Dictionary<string, string> { ["auth.issuer"] = "https://auth.example" };
+        var echoed = new SyncMember("member-a", MemberKind.Anchor, [], 3, GossipState.Alive, "v1",
+            new Dictionary<string, string> { ["auth.issuer"] = "https://auth.example" });
+
+        Assert.Equal(MergeAction.Ignore, RosterMerger.Decide(
+            echoed, existing: null, myMemberId: "member-a", selfIncarnation: 3, existingFirstHandFresh: false,
+            selfPublished: stated).Action);
+
+        // And an older report carrying the old facts is simply behind: it supersedes nothing either way.
+        Assert.Equal(MergeAction.Ignore, RosterMerger.Decide(
+            echoed with { Incarnation = 2, Published = new Dictionary<string, string> { ["auth.issuer"] = "kgsm" } },
+            existing: null, myMemberId: "member-a", selfIncarnation: 3, existingFirstHandFresh: false,
+            selfPublished: stated).Action);
+    }
+
+    [Fact]
     public void OurOwnFreshProbeOutranksAnEqualIncarnationRumour()
     {
         // Somebody else's suspicion does not override what this member just confirmed with its own eyes.

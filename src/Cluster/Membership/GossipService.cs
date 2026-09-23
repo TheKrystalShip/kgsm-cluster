@@ -67,7 +67,8 @@ public sealed class GossipService(
                 MemberRow? existing = await members.GetByMemberIdAsync(member.MemberId, ct).ConfigureAwait(false);
                 bool fresh = existing is not null && IsFirstHandFresh(existing, now);
                 MergeOutcome outcome =
-                    RosterMerger.Decide(member, existing, myMemberId, selfIncarnation.Current, fresh);
+                    RosterMerger.Decide(member, existing, myMemberId, selfIncarnation.Current, fresh,
+                        publications.Current);
 
                 // Addressing is taken from any report about a member we hold, whatever that report is
                 // worth as a claim about its state. Where a member answers is an additive fact and the
@@ -101,6 +102,14 @@ public sealed class GossipService(
                             "the mesh holds incarnation {Observed} for us and we were at less — caught up to " +
                             "{New} so this member's own entry is heard again",
                             member.Incarnation, caught);
+                        break;
+
+                    case MergeAction.RestateSelf:
+                        long restated = selfIncarnation.RaiseToRefute(member.Incarnation);
+                        logger.LogInformation(
+                            "the mesh holds incarnation {Observed} for us with facts this member no longer " +
+                            "states — raised to {New} so what it states now is heard",
+                            member.Incarnation, restated);
                         break;
 
                     case MergeAction.Insert:

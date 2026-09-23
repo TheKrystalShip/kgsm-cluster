@@ -74,9 +74,13 @@ fingerprint yet is recorded without discarding, because it cannot say which clus
 and kind all ride the self-entry, and an entry at an incarnation the receiver already holds supersedes
 nothing. So changing the fact set raises this member's counter, and a member that finds the mesh ahead of it
 climbs past — a restart resets the counter to zero while everybody else still holds where the last process
-reached. Without both, a member that stays healthy can never change one word of its own entry, and the
-symptom is nothing at all: no error, no log line, the old value simply staying put. Both raises are strictly
-ahead of what was observed, never level, or a healthy cluster raises its incarnations once per round forever.
+reached. A restart that publishes as many facts as the last process, one of them different, counts back up to
+exactly the incarnation the mesh holds; so a member that finds the mesh level with it but holding facts it no
+longer states climbs past too (`RestateSelf`). Without all three, a member can never change one word of its
+own entry, and the symptom is nothing at all: no error, no log line, the old value simply staying put. Every
+raise lands strictly ahead of what was observed, and the level case raises only on a difference, or a healthy
+cluster — every member echoing a member's own entry back to it — raises its incarnations once per round
+forever.
 
 **Candidate order is the member's own statement, and two writers must not fight over it.** A member lists
 its addresses most-preferred first, and that ranking is the only thing carrying which address it wants to be

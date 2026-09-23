@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.23]
+
+### Fixed — a fact changed across a restart is heard
+
+A member that restarts counts its incarnation back up from zero as it publishes its facts. Publishing as
+many as the previous process, one of them different, landed it level with the incarnation every other
+member held, and a level entry supersedes nothing: the changed fact never reached anybody. A member that
+finds the mesh holding its own incarnation with facts it no longer states now raises one past it
+(`MergeAction.RestateSelf`). Measured on a fresh install, where the anchor's issuer, set after first start,
+never reached the node beside it.
+
 ## [1.0.0-dev.22]
 
 ### Added — a member's store belongs to one cluster
