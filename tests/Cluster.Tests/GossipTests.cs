@@ -157,20 +157,6 @@ public class GossipTests
     }
 
     [Fact]
-    public async Task PanelOriginsTravelBetweenMembersWithoutBeingInterpreted()
-    {
-        // The package carries the list so a panel served from one member reaches every other. What a member
-        // does with it is its own business; that it arrives is this package's.
-        await using MemberHost a = await MemberHost.StartAsync("member-a", Secret);
-        await using MemberHost b = await MemberHost.StartAsync("member-b", Secret);
-
-        await a.Resolve<SelfIdentityStore>().RecordPanelOriginAsync("https://panel.example.com", default);
-        await a.Resolve<MemberHandshakeService>().AddMemberAsync(b.Url, null, default);
-
-        Assert.Contains("https://panel.example.com", await b.Resolve<SelfIdentityStore>().PanelOriginsAsync(default));
-    }
-
-    [Fact]
     public async Task AMemberThatGoesSilentIsSuspectedThenDeclaredDeadThenReaped()
     {
         // Failure detection end to end, driven off the clock rather than waited on. A member is suspected

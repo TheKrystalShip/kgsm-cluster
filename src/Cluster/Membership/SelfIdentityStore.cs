@@ -5,8 +5,7 @@ using TheKrystalShip.KGSM.Cluster.Storage;
 namespace TheKrystalShip.KGSM.Cluster.Membership;
 
 /// <summary>
-/// What this member knows about itself: the addresses it answers at, and the browser origins somebody has
-/// signed in from.
+/// What this member knows about itself: the addresses it answers at.
 /// <para>
 /// A member cannot determine its own public address — behind NAT, a reverse proxy or a load balancer, the
 /// address it is reached at leaves no local trace. So the addresses here are <b>reflected</b>: whoever
@@ -26,11 +25,6 @@ namespace TheKrystalShip.KGSM.Cluster.Membership;
 /// reflected: reflection reports where somebody once reached this member, and an assigned name is where
 /// the cluster says it is reached now.
 /// </para>
-/// <para>
-/// <b>Panel origins are carried, not interpreted.</b> They travel with the join exchange so a panel served
-/// from one member reaches every other without a per-member allowlist, and what a member does with the
-/// list — a browser-facing one consults it for CORS, a headless one ignores it — is that member's business.
-/// </para>
 /// </summary>
 public sealed class SelfIdentityStore(
     ClusterStore store, ClusterOptions options, IEnumerable<ISelfAddressSource>? assigned = null)
@@ -40,14 +34,11 @@ public sealed class SelfIdentityStore(
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     // Reference assignment is atomic; a racing read may briefly see the prior list and converges on the
-    // next read. The cache exists because a CORS check consults the origins on the request path.
+    // next read. Cached because every gossip round builds this member's card from it.
     private IReadOnlyList<SelfFact>? _facts;
 
     /// <summary>An address a member answers at.</summary>
     public const string CandidateKind = "candidate";
-
-    /// <summary>A browser origin somebody signed in from.</summary>
-    public const string OriginKind = "origin";
 
     /// <summary>Provenance of an address a human pasted into a panel and a member then proved answers — the
     /// strongest address statement in the system.</summary>
@@ -127,39 +118,10 @@ public sealed class SelfIdentityStore(
         return [.. seen.Values];
     }
 
-    /// <summary>Every browser origin recorded here. Served from the in-memory cache, because a CORS check
-    /// reads it on the request path.</summary>
-    public async Task<IReadOnlyList<string>> PanelOriginsAsync(CancellationToken ct)
-    {
-        IReadOnlyList<SelfFact> facts = await FactsAsync(ct).ConfigureAwait(false);
-        return [.. facts.Where(f => string.Equals(f.Kind, OriginKind, StringComparison.Ordinal)).Select(f => f.Value)];
-    }
-
-    /// <summary>
-    /// Load what this member knows about itself into memory. Called once at startup, because a CORS check
-    /// reads the cache synchronously and a cold cache reads as "nothing learned" — which would leave a
-    /// member that HAS learned an origin answering as though it had not.
-    /// </summary>
-    public Task PrimeAsync(CancellationToken ct) => FactsAsync(ct);
-
-    /// <summary>
-    /// The cached origins, or null when nothing has been loaded yet. Lets a CORS check answer synchronously
-    /// without blocking a request thread on the database; a cold cache falls through to whatever allowlist
-    /// the member already had, which is the same answer it gave before it learned anything.
-    /// </summary>
-    public IReadOnlyList<string>? CachedPanelOrigins() =>
-        _facts is null
-            ? null
-            : [.. _facts.Where(f => string.Equals(f.Kind, OriginKind, StringComparison.Ordinal)).Select(f => f.Value)];
-
     /// <summary>Record an address this member was reached at. Re-recording refreshes the row rather than
     /// adding a second one.</summary>
     public Task RecordCandidateAsync(string url, bool client, string provenance, CancellationToken ct) =>
         RecordAsync(CandidateKind, url, client, provenance, ct);
-
-    /// <summary>Record a browser origin somebody signed in from.</summary>
-    public Task RecordPanelOriginAsync(string origin, CancellationToken ct) =>
-        RecordAsync(OriginKind, origin, client: true, BrowserObserved, ct);
 
     private async Task RecordAsync(string kind, string raw, bool client, string provenance, CancellationToken ct)
     {

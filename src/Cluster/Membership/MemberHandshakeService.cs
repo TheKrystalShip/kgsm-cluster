@@ -197,7 +197,6 @@ public sealed class MemberHandshakeService(
             // The address a human wrote down, which this request is about to prove answers. It is the one
             // thing the far side cannot work out for itself, and the reason it needs no configuration.
             new ReflectedAddress(target, SelfIdentityStore.OperatorProvenance),
-            await selfIdentity.PanelOriginsAsync(ct).ConfigureAwait(false),
             await clusterState.ListAsync(ct).ConfigureAwait(false));
 
         IntroduceExchange? incoming;
@@ -260,11 +259,6 @@ public sealed class MemberHandshakeService(
                 .ConfigureAwait(false);
         }
 
-        // The far side's origins are as good as our own under the shared secret, and this is the direction
-        // the receiving half already covers.
-        foreach (string origin in incoming.PanelOrigins ?? [])
-            await selfIdentity.RecordPanelOriginAsync(origin, ct).ConfigureAwait(false);
-
         // What the cluster has already decided, taken at join. A member that joins without it can believe
         // a capability is unheld and claim one that is already held.
         await clusterState.MergeAsync(incoming.State, ct).ConfigureAwait(false);
@@ -301,12 +295,6 @@ public sealed class MemberHandshakeService(
                 .ConfigureAwait(false);
         }
 
-        // The shared secret is the trust boundary, so another member's origins are as good as our own — and
-        // without the merge a person signing in through one member could not reach the others from the same
-        // panel.
-        foreach (string origin in incoming.PanelOrigins ?? [])
-            await selfIdentity.RecordPanelOriginAsync(origin, ct).ConfigureAwait(false);
-
         await clusterState.MergeAsync(incoming.State, ct).ConfigureAwait(false);
 
         // The caller's own candidates are all we have to reach it by — it named no address for itself that
@@ -318,7 +306,6 @@ public sealed class MemberHandshakeService(
             observedAddress is null
                 ? null
                 : new ReflectedAddress(observedAddress, SelfIdentityStore.PeerObservedProvenance),
-            await selfIdentity.PanelOriginsAsync(ct).ConfigureAwait(false),
             await clusterState.ListAsync(ct).ConfigureAwait(false));
 
         return (MemberAddOutcome.Added, answer);

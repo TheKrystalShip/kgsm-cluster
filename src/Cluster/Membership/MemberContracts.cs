@@ -85,11 +85,6 @@ public sealed record ReflectedAddress(string Url, string Provenance);
 /// <param name="Self">The sender's own card.</param>
 /// <param name="YouAre">Where the sender reached the receiver. Null when the sender has no address to
 /// report — never a fabricated one.</param>
-/// <param name="PanelOrigins">
-/// Browser origins a member has seen somebody sign in from. Carried, never interpreted: this package
-/// transports the list so that a panel served from one member reaches every other without a per-member
-/// allowlist, and each member decides for itself what to do with it. A headless member ignores it.
-/// </param>
 /// <param name="State">
 /// What the sender knows about the cluster itself — which member holds each capability. Carried at join
 /// rather than left to the first gossip round, because a member that joins without it can believe a
@@ -99,7 +94,6 @@ public sealed record ReflectedAddress(string Url, string Provenance);
 public sealed record IntroduceExchange(
     MemberCard Self,
     ReflectedAddress? YouAre,
-    IReadOnlyList<string> PanelOrigins,
     IReadOnlyList<ClusterAssignment>? State = null);
 
 /// <summary>

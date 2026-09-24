@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.24]
+
+### Removed — panel origins in the introduce exchange
+
+`IntroduceExchange.PanelOrigins` and the origins `SelfIdentityStore` kept for it. Nothing recorded an
+origin but the exchange itself, and nothing read one: the origins a member admits are the sign-in
+provider's registered clients, published by the auth anchor as `auth.origins`. A member still on an
+earlier version sends the field and it is ignored; one sending none to an earlier version is read as an
+empty list.
+
 ## [1.0.0-dev.23]
 
 ### Fixed — a fact changed across a restart is heard
