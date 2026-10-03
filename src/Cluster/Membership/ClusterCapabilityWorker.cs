@@ -41,8 +41,8 @@ public readonly record struct CapabilityHolding(CapabilityStanding Standing, str
 /// </para>
 /// <para>
 /// <b>Nothing here promotes anything.</b> The claim only ever writes into an empty assignment; a
-/// capability somebody already holds is left alone however unreachable that member is. Failover is an
-/// admin reassigning, because a member that promoted itself during a partition would produce two of
+/// capability somebody already holds is left alone however unreachable that member is. Failover is a
+/// reassignment under <c>api:members.manage</c>, because a member that promoted itself during a partition would produce two of
 /// them answering for one thing.
 /// </para>
 /// <para>

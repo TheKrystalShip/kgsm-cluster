@@ -15,7 +15,7 @@ namespace TheKrystalShip.KGSM.Cluster;
 /// the cluster's accounts.
 /// </para>
 /// <para>
-/// <b>Who is asserted; what is not.</b> The caller states a handle and nothing else — no tier, no scope,
+/// <b>Who is asserted; what is not.</b> The caller states a handle and nothing else — no role, no scope,
 /// no claim about what should be allowed. A compromised caller can therefore act as somebody it names and
 /// never above what that person actually holds, which is strictly narrower than a shared secret that
 /// forwards an authority along with an identity.
@@ -59,7 +59,7 @@ public static class MemberActing
     /// <summary>The authentication scheme a member-acting call is authenticated under.</summary>
     /// <remarks>
     /// Its own scheme rather than a variant of the session one: what proves the caller, what identifies the
-    /// person, and where the tier comes from are all different, and sharing a scheme would mean one handler
+    /// person, and where what they may do comes from are all different, and sharing a scheme would mean one handler
     /// holding two unrelated stories about how a request became trusted.
     /// </remarks>
     public const string Scheme = "MemberActing";

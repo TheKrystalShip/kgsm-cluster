@@ -4,7 +4,7 @@ namespace TheKrystalShip.KGSM.Cluster.Identity;
 /// Mints and validates the member service token — the bearer every member-to-member call
 /// authenticates with. A short-lived HMAC-signed JWT carrying <c>iss</c> = the sending member's id and
 /// <c>aud=cluster</c>, it proves membership of this cluster and nothing more: it is not a person's
-/// identity and carries no tier.
+/// identity and carries no authority.
 /// </summary>
 /// <remarks>
 /// <b>Attribution, not isolation.</b> Members share one cluster secret, so any member can mint a token
