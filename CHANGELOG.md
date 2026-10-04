@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0]
+
+### Changed — released
+
+The package is released as 1.0.0-dev.24 stood, with comments that name a reassignment under
+`api:members.manage` and describe member calls without tiers. No behaviour changes.
+
 ## [1.0.0-dev.24]
 
 ### Removed — panel origins in the introduce exchange
