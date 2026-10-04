@@ -24,7 +24,7 @@ public class CoResidentMembersTests
     public async Task ANodeAndAnAnchorOnOneMachineHoldSeparateRosters()
     {
         string nodeState = StatePath("kgsm-api");
-        string anchorState = StatePath("kgsm-auth");
+        string anchorState = StatePath("tks-auth");
         Prepare(nodeState);
         Prepare(anchorState);
 
@@ -51,7 +51,7 @@ public class CoResidentMembersTests
     {
         // The acceptance in one sentence: neither member's membership depends on the other's process.
         string nodeState = StatePath("kgsm-api");
-        string anchorState = StatePath("kgsm-auth");
+        string anchorState = StatePath("tks-auth");
         Prepare(nodeState);
         Prepare(anchorState);
 
@@ -108,7 +108,7 @@ public class CoResidentMembersTests
     public async Task EachMemberWritesOnlyItsOwnFile()
     {
         string nodeState = StatePath("kgsm-api");
-        string anchorState = StatePath("kgsm-auth");
+        string anchorState = StatePath("tks-auth");
         Prepare(nodeState);
         Prepare(anchorState);
 
@@ -147,7 +147,7 @@ public class CoResidentMembersTests
         await using MemberHost node = await MemberHost.StartAsync(
             "hotrod", Secret, dbPath: Path.Combine(shared, "kgsm-api.cluster.db"));
         await using MemberHost anchor = await MemberHost.StartAsync(
-            "auth-anchor", Secret, dbPath: Path.Combine(shared, "kgsm-auth.cluster.db"),
+            "auth-anchor", Secret, dbPath: Path.Combine(shared, "tks-auth.cluster.db"),
             kind: MemberKind.Anchor);
 
         await node.Resolve<MemberHandshakeService>().AddMemberAsync(far.Url, null, default);
